@@ -539,7 +539,7 @@ class HiFiGANScaleDiscriminator(torch.nn.Module):
 
         # backward compatibility
         self._register_load_state_dict_pre_hook(self._load_state_dict_pre_hook)
-        self.register_load_state_dict_post_hook(self._load_state_dict_post_hook)
+        # self.register_load_state_dict_post_hook(self._load_state_dict_post_hook)
 
     def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
         """Calculate forward propagation.
