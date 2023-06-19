@@ -577,6 +577,30 @@ class HiFiGANScaleDiscriminator(torch.nn.Module):
 
         self.apply(_apply_spectral_norm)
 
+    def remove_weight_norm(self):
+        """Remove weight normalization module from all of the layers."""
+
+        def _remove_weight_norm(m):
+            try:
+                logging.debug(f"Weight norm is removed from {m}.")
+                torch.nn.utils.remove_weight_norm(m)
+            except ValueError:  # this module didn't have weight norm
+                return
+
+        self.apply(_remove_weight_norm)
+
+    def remove_spectral_norm(self):
+        """Remove spectral normalization module from all of the layers."""
+
+        def _remove_spectral_norm(m):
+            try:
+                logging.debug(f"Spectral norm is removed from {m}.")
+                torch.nn.utils.remove_spectral_norm(m)
+            except ValueError:  # this module didn't have weight norm
+                return
+
+        self.apply(_remove_spectral_norm)
+
     def _load_state_dict_pre_hook(
         self,
         state_dict,
@@ -592,53 +616,46 @@ class HiFiGANScaleDiscriminator(torch.nn.Module):
         Some pretrained models are trained with configs that use weight / spectral
         normalization, but actually, the norm is not applied. This causes the mismatch
         of the parameters with configs. To solve this issue, when parameter mismatch
-        happens in loading, we remove the norm at first, load the parameters, and then
-        apply the norm in post-hook functions.
+        happens in loading pretrained model, we remove the norm from the current model.
 
         See also:
-            - https://github.com/espnet/espnet/issues/4595
+            - https://github.com/espnet/espnet/pull/5240
+            - https://github.com/kan-bayashi/ParallelWaveGAN/pull/409
 
         """
         if self.use_weight_norm and not any(
             ["weight_g" in k for k in state_dict.keys()]
         ):
             logging.warning(
-                "It seems weight norm is not applied in the pretrained model. To"
-                " keep the compatibility, we will apply the norm to the pretrained"
-                " parameters."
+                "It seems weight norm is not applied in the pretrained model but the"
+                " current model uses it. To keep the compatibility, we remove the norm"
+                " from the current model. This may causes training error due to the"
+                " parameter mismatch when finetuning. To avoid this issue, please"
+                " change the following parameters in config to false:\n"
+                " - discriminator_params.follow_official_norm\n"
+                " - discriminator_params.scale_discriminator_params.use_weight_norm\n"
+                " - discriminator_params.scale_discriminator_params.use_spectral_norm\n"
+                " See also: https://github.com/espnet/espnet/pull/5240"
             )
-            keys = [k[:-2] for k in self.state_dict().keys() if k.endswith("weight_g")]
-            from torch.nn.utils import weight_norm
-
-            for k in keys:
-                weight = state_dict[prefix + k]
-                m = torch.nn.Conv1d(weight.shape[1], weight.shape[0], weight.shape[2])
-                weight_norm(m)
-                state_dict[prefix + k + "_g"] = m.weight_g
-                state_dict[prefix + k + "_v"] = m.weight_v
-                del state_dict[prefix + k]
-                del m
+            self.remove_weight_norm()
+            self.use_weight_norm = False
 
         if self.use_spectral_norm and not any(
             ["weight_u" in k for k in state_dict.keys()]
         ):
             logging.warning(
-                "It seems spectral norm is not applied in the pretrained model. To"
-                " keep the compatibility, we will apply the norm to the pretrained"
-                " parameters."
+                "It seems spectral norm is not applied in the pretrained model but the"
+                " current model uses it. To keep the compatibility, we remove the norm"
+                " from the current model. This may causes training error due to the"
+                " parameter mismatch when finetuning. To avoid this issue, please"
+                " change the following parameters in config to false:\n"
+                " - discriminator_params.follow_official_norm\n"
+                " - discriminator_params.scale_discriminator_params.use_weight_norm\n"
+                " - discriminator_params.scale_discriminator_params.use_spectral_norm\n"
+                " See also: https://github.com/espnet/espnet/pull/5240"
             )
-            keys = [k[:-2] for k in self.state_dict().keys() if k.endswith("weight_u")]
-            from torch.nn.utils import spectral_norm
-
-            for k in keys:
-                weight = state_dict[prefix + k]
-                m = torch.nn.Conv1d(weight.shape[1], weight.shape[0], weight.shape[2])
-                spectral_norm(m)
-                state_dict[prefix + k + "_u"] = m.weight_u
-                state_dict[prefix + k + "_v"] = m.weight_v
-                state_dict[prefix + k + "_orig"] = m.weight_orig
-                del state_dict[prefix + k]
-                del m
+            self.remove_spectral_norm()
+            self.use_spectral_norm = False
 
 
 class HiFiGANMultiScaleDiscriminator(torch.nn.Module):
