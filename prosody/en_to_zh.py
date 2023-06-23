@@ -4,7 +4,8 @@ import numpy as np
 import torch
 import soundfile as sf
 from pypinyin import lazy_pinyin, Style, load_phrases_dict
-from prosody.utils import mod_fn_generator, ARPA_VOWELS, PUNCS, get_d_mod_fns, duration_even_split, print_numseq
+from prosody.utils.text import ARPA_VOWELS, PUNCS
+from prosody.utils.utils import get_p_mod_fns, get_d_mod_fns, duration_even_split, print_table
 from prosody.pinyin import regularize_pinyin, NULL_INITIAL
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -553,19 +554,11 @@ class PinyinArpaSpeech:
                             pitch_value[i] = pitch + adjustment * count / pitch_len
                             count -= 1
 
-        p_mod_fns = self.get_p_mod_fns(pitch_values, combine_fns, batch_i)
+        p_mod_fns = get_p_mod_fns(pitch_values, combine_fns, batch_i)
         return joined_arpas, all_tones, d_factor, d_split_factor, pitch_values, p_mod_fns
 
     def convert_hanzi_arpa(self, hans, batch_i=0):
         return self.convert_pinyin_arpa(self.convert_hanzi_pinyin(hans), batch_i)
-
-    @staticmethod
-    def get_p_mod_fns(pitch_values, combine_fns, batch_i=0):
-        p_mod_fns = {}
-        for i, (pitch_value, combine_fn) in enumerate(zip(pitch_values, combine_fns)):
-            if pitch_value[0] is not None:
-                p_mod_fns[(batch_i, i)] = mod_fn_generator(pitch_value, combine_fn)
-        return p_mod_fns
 
 
     def gen_inputs(self, chinese, device=DEVICE):
@@ -575,7 +568,7 @@ class PinyinArpaSpeech:
             arpas, tones, d_factor, d_split_factor, pitch_values, p_mod_fns = self.convert_pinyin_arpa(chinese)
         else:
             raise NotImplementedError('chinese must be string of characters or list of regularized pinyin')
-        print_numseq(arpas=arpas, d_factor=d_factor, d_split_factor=d_split_factor, tones=tones, pitch_values=pitch_values)
+        print_table(arpas=arpas, d_factor=d_factor, d_split_factor=d_split_factor, tones=tones, pitch_values=pitch_values)
         d_factor = torch.tensor(d_factor, device=device).unsqueeze(0)
         d_split_factor = torch.tensor(d_split_factor, dtype=torch.int32, device=device).unsqueeze(0)
         return arpas, tones, d_factor, d_split_factor, pitch_values, p_mod_fns
@@ -621,7 +614,7 @@ class PinyinArpaSpeech:
                 infer_kwargs[x] = infer_overrides[x]
         phone_ids = torch.tensor(self.token_id_converter.tokens2ids(arpas), dtype=torch.int32, device=device)
         with torch.no_grad():
-            wav_modified, _, _ = self.tts_inference_fn(
+            wav_modified, _ = self.tts_inference_fn(
                     text=phone_ids.unsqueeze(0), text_lengths=torch.tensor([len(phone_ids)], device=device),
                     verbose=True,
                     **infer_kwargs,
