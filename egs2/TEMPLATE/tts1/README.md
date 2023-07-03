@@ -75,10 +75,13 @@ Because the script `scripts/mfa.sh` prepares the data, it is not required to exe
 need to set some additional flags, such as `--split_sets`, `--samplerate`, or `--acoustic_model`:
 
 ```bash
-./scripts/mfa.sh --split_sets "train_set dev_set test_set" \
+./scripts/utils/mfa.sh --split_sets "train_set dev_set test_set" \
     --stage 1 \
     --stop-stage 2 \
-    --train true --nj 36 --g2p_model espeak_ng_english_vits
+    --train true \
+    --samplerate 22050 \
+    --nj 36 \
+    --g2p_model espeak_ng_english_vits
 ```
 
 You can find a reference at `egs2/ljspeech/tts1/local/run_mfa.sh`.
