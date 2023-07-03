@@ -92,7 +92,7 @@ export LC_ALL=C
 
 function check_sorted_and_uniq {
   ! perl -ne '((substr $_,-1) eq "\n") or die "file $ARGV has invalid newline";' $1 && exit 1;
-  ! awk '{print $1}' < $1 | sort -uC && echo "$0: file $1 is not sorted or has duplicates" && exit 1;
+  ! awk '{print $1}' < $1 | sort -uCV && echo "$0: file $1 is not sorted or has duplicates" && exit 1;
 }
 
 function partial_diff {
@@ -105,7 +105,7 @@ function partial_diff {
 check_sorted_and_uniq $data/utt2spk
 
 if ! $no_spk_sort; then
-  ! sort -k2 -C $data/utt2spk && \
+  ! sort -k2 -k1 -CV $data/utt2spk && \
      echo "$0: utt2spk is not in sorted order when sorted first on speaker-id " && \
      echo "(fix this by making speaker-ids prefixes of utt-ids)" && exit 1;
 fi
@@ -195,7 +195,7 @@ if [ -f $data/wav.scp ]; then
         exit 1
     fi
 
-    cat $data/segments | awk '{print $2}' | sort | uniq > $tmpdir/recordings
+    cat $data/segments | awk '{print $2}' | sort -V | uniq > $tmpdir/recordings
     awk '{print $1}' $data/wav.scp > $tmpdir/recordings.wav
     if ! cmp -s $tmpdir/recordings{,.wav}; then
       echo "$0: Error: in $data, recording-ids extracted from segments and wav.scp"
@@ -348,7 +348,6 @@ for f in vad.scp utt2lang utt2uniq; do
     fi
   fi
 done
-
 
 if [ -f $data/utt2dur ]; then
   check_sorted_and_uniq $data/utt2dur

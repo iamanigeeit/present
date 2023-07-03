@@ -44,7 +44,7 @@ export LC_ALL=C
 
 function check_sorted {
   file=$1
-  sort -k1,1 -u <$file >$file.tmp
+  sort -k1,1 -uV <$file >$file.tmp
   if ! cmp -s $file $file.tmp; then
     echo "$0: file $1 is not in sorted order or not unique, sorting it"
     mv $file.tmp $file
@@ -90,7 +90,7 @@ function filter_recordings {
       echo "$0: $data/segments exists but not $data/wav.scp"
       exit 1;
     fi
-    awk '{print $2}' < $data/segments | sort | uniq > $tmpdir/recordings
+    awk '{print $2}' < $data/segments | sort -V | uniq > $tmpdir/recordings
     n1=$(cat $tmpdir/recordings | wc -l)
     [ ! -s $tmpdir/recordings ] && \
       echo "Empty list of recordings (bad file $data/segments)?" && exit 1;
@@ -136,18 +136,18 @@ function filter_speakers {
 function filter_utts {
   cat $data/utt2spk | awk '{print $1}' > $tmpdir/utts
 
-  ! cat $data/utt2spk | sort | cmp - $data/utt2spk && \
+  ! cat $data/utt2spk | sort -V | cmp - $data/utt2spk && \
     echo "utt2spk is not in sorted order (fix this yourself)" && exit 1;
 
-  ! cat $data/utt2spk | sort -k2 | cmp - $data/utt2spk && \
+  ! cat $data/utt2spk | sort -k2 -k1 -V | cmp - $data/utt2spk && \
     echo "utt2spk is not in sorted order when sorted first on speaker-id " && \
     echo "(fix this by making speaker-ids prefixes of utt-ids)" && exit 1;
 
-  ! cat $data/spk2utt | sort | cmp - $data/spk2utt && \
+  ! cat $data/spk2utt | sort -V | cmp - $data/spk2utt && \
     echo "spk2utt is not in sorted order (fix this yourself)" && exit 1;
 
   if [ -f $data/utt2uniq ]; then
-    ! cat $data/utt2uniq | sort | cmp - $data/utt2uniq && \
+    ! cat $data/utt2uniq | sort -V | cmp - $data/utt2uniq && \
       echo "utt2uniq is not in sorted order (fix this yourself)" && exit 1;
   fi
 
