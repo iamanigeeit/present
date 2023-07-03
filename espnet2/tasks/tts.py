@@ -10,7 +10,7 @@ import torch
 import yaml
 from typeguard import check_argument_types, check_return_type
 
-from espnet2.gan_tts.jets import JETS
+from espnet2.gan_tts.jets_new import JETS
 from espnet2.gan_tts.joint import JointText2Wav
 from espnet2.gan_tts.vits import VITS
 from espnet2.layers.abs_normalize import AbsNormalize
@@ -27,6 +27,7 @@ from espnet2.tts.fastspeech import FastSpeech
 from espnet2.tts.fastspeech2 import FastSpeech2
 from espnet2.tts.feats_extract.abs_feats_extract import AbsFeatsExtract
 from espnet2.tts.feats_extract.dio import Dio
+from espnet2.tts.feats_extract.praat_pitch import PraatPitch
 from espnet2.tts.feats_extract.energy import Energy
 from espnet2.tts.feats_extract.linear_spectrogram import LinearSpectrogram
 from espnet2.tts.feats_extract.log_mel_fbank import LogMelFbank
@@ -52,7 +53,7 @@ feats_extractor_choices = ClassChoices(
 )
 pitch_extractor_choices = ClassChoices(
     "pitch_extract",
-    classes=dict(dio=Dio),
+    classes=dict(dio=Dio, praat_pitch=PraatPitch),
     type_check=AbsFeatsExtract,
     default=None,
     optional=True,
