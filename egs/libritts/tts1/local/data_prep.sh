@@ -5,14 +5,16 @@
 # Modifications Copyright 2019  Nagoya University (author: Takenori Yoshimura)
 # Apache 2.0
 
-if [ "$#" -ne 2 ]; then
-  echo "Usage: $0 <src-dir> <dst-dir>"
+if [ "$#" -ne 2 ] && [ "$#" -ne 3 ]; then
+  echo "Usage: $0 <src-dir> <dst-dir> [--no_chapter]"
   echo "e.g.: $0 /export/a15/vpanayotov/data/LibriTTS/dev-clean data/dev-clean"
+  echo "By default, speaker id includes the book chapter id. Adding --no_chapter will disable this."
   exit 1
 fi
 
 src=$1
 dst=$2
+no_chapter=$3
 
 spk_file=$src/../SPEAKERS.txt
 
@@ -27,9 +29,9 @@ trans=$dst/text; [[ -f "$trans" ]] && rm $trans
 utt2spk=$dst/utt2spk; [[ -f "$utt2spk" ]] && rm $utt2spk
 spk2gender=$dst/spk2gender; [[ -f $spk2gender ]] && rm $spk2gender
 
-for reader_dir in $(find -L $src -mindepth 1 -maxdepth 1 -type d | sed -e "s/$/_/" | sort); do
-  reader_dir=$(echo $reader_dir | sed -e "s/_$//")
-  reader=$(basename $reader_dir)
+# Sort speakers numerically
+for reader in $(find -L "$src" -mindepth 1 -maxdepth 1 -type d | awk -F / '{print $NF}' | sort -n); do
+  reader_dir="$src/$reader"
   if ! [ $reader -eq $reader ]; then  # not integer.
     echo "$0: unexpected subdirectory name $reader"
     exit 1
@@ -41,16 +43,20 @@ for reader_dir in $(find -L $src -mindepth 1 -maxdepth 1 -type d | sed -e "s/$/_
     exit 1
   fi
 
-  for chapter_dir in $(find -L $reader_dir/ -mindepth 1 -maxdepth 1 -type d | sort); do
-    chapter=$(basename $chapter_dir)
+  spk=${reader}
+
+  for chapter in $(find -L "$reader_dir/" -mindepth 1 -maxdepth 1 -type d | awk -F / '{print $NF}' | sort -n); do
+    chapter_dir="$reader_dir/$chapter"
     if ! [ "$chapter" -eq "$chapter" ]; then
       echo "$0: unexpected chapter-subdirectory name $chapter"
       exit 1
     fi
 
-    spk="${reader}_${chapter}"
+    if [ -z "$no_chapter" ]; then
+      spk="${reader}_${chapter}"
+    fi
 
-    find -L $chapter_dir/ -iname "*.wav" | sort | while read -r wav_file; do
+    find -L $chapter_dir/ -iname "*.wav" | sort -n | while read -r wav_file; do
        id=$(basename $wav_file .wav)
        echo "$id $wav_file" >>$wav_scp
 
@@ -64,11 +70,17 @@ for reader_dir in $(find -L $src -mindepth 1 -maxdepth 1 -type d | sed -e "s/$/_
     done
 
     # reader -> gender map (again using per-chapter granularity)
-    echo "$spk $reader_gender" >>$spk2gender
+    if [ -z "$no_chapter" ]; then
+      echo "$spk $reader_gender" >> $spk2gender
+    fi
   done
+
+  if [ -n "$no_chapter" ]; then
+    echo "$spk $reader_gender" >> $spk2gender
+  fi
 done
 
-spk2utt=$dst/spk2utt
+spk2utt="$dst/spk2utt"
 utils/utt2spk_to_spk2utt.pl <$utt2spk >$spk2utt || exit 1
 
 ntrans=$(wc -l <$trans)
