@@ -118,7 +118,7 @@ speech_fold_length=800 # fold_length for speech data.
 hf_repo=
 
 help_message=$(cat << EOF
-Usage: $0 --train-set "<train_set_name>" --valid-set "<valid_set_name>" --test_sets "<test_set_names>" --srctexts "<srctexts>"
+Usage: $0 --train_set "<train_set_name>" --valid_set "<valid_set_name>" --test_sets "<test_set_names>" --srctexts "<srctexts>"
 
 Options:
     # General configuration
@@ -320,25 +320,25 @@ if ! "${skip_data_prep}"; then
         # If nothing is need, then format_wav_scp.sh does nothing:
         # i.e. the input file format and rate is same as the output.
 
-        log "Stage 2: Format wav.scp: data/ -> ${data_feats}/"
-        for dset in "${train_set}" "${valid_set}" ${test_sets}; do
-            if [ "${dset}" = "${train_set}" ] || [ "${dset}" = "${valid_set}" ]; then
-                _suf="/org"
-            else
-                _suf=""
-            fi
-            utils/copy_data_dir.sh data/"${dset}" "${data_feats}${_suf}/${dset}"
-            rm -f ${data_feats}${_suf}/${dset}/{segments,wav.scp,reco2file_and_channel}
-            _opts=
-            if [ -e data/"${dset}"/segments ]; then
-                _opts+="--segments data/${dset}/segments "
-            fi
-            # shellcheck disable=SC2086
-            scripts/audio/format_wav_scp.sh --nj "${nj}" --cmd "${train_cmd}" \
-                --audio-format "${audio_format}" --fs "${fs}" ${_opts} \
-                "data/${dset}/wav.scp" "${data_feats}${_suf}/${dset}"
-            echo "${feats_type}" > "${data_feats}${_suf}/${dset}/feats_type"
-        done
+#        log "Stage 2: Format wav.scp: data/ -> ${data_feats}/"
+#        for dset in "${train_set}" "${valid_set}" ${test_sets}; do
+#            if [ "${dset}" = "${train_set}" ] || [ "${dset}" = "${valid_set}" ]; then
+#                _suf="/org"
+#            else
+#                _suf=""
+#            fi
+#            utils/copy_data_dir.sh data/"${dset}" "${data_feats}${_suf}/${dset}"
+#            rm -f ${data_feats}${_suf}/${dset}/{segments,wav.scp,reco2file_and_channel}
+#            _opts=
+#            if [ -e data/"${dset}"/segments ]; then
+#                _opts+="--segments data/${dset}/segments "
+#            fi
+#            # shellcheck disable=SC2086
+#            scripts/audio/format_wav_scp.sh --nj "${nj}" --cmd "${train_cmd}" \
+#                --audio-format "${audio_format}" --fs "${fs}" ${_opts} \
+#                "data/${dset}/wav.scp" "${data_feats}${_suf}/${dset}"
+#            echo "${feats_type}" > "${data_feats}${_suf}/${dset}/feats_type"
+#        done
 
         # Extract X-vector
         if "${use_xvector}"; then
@@ -418,52 +418,52 @@ if ! "${skip_data_prep}"; then
             fi
         fi
 
-        # Prepare spk id input
-        if "${use_sid}"; then
-            log "Stage 2+: Prepare speaker id: data/ -> ${data_feats}/"
-            for dset in "${train_set}" "${valid_set}" ${test_sets}; do
-                if [ "${dset}" = "${train_set}" ] || [ "${dset}" = "${valid_set}" ]; then
-                    _suf="/org"
-                else
-                    _suf=""
-                fi
-                if [ "${dset}" = "${train_set}" ]; then
-                    # Make spk2sid
-                    # NOTE(kan-bayashi): 0 is reserved for unknown speakers
-                    echo "<unk> 0" > "${data_feats}${_suf}/${dset}/spk2sid"
-                    cut -f 2 -d " " "${data_feats}${_suf}/${dset}/utt2spk" | sort | uniq | \
-                        awk '{print $1 " " NR}' >> "${data_feats}${_suf}/${dset}/spk2sid"
-                fi
-                pyscripts/utils/utt2spk_to_utt2sid.py \
-                    "${data_feats}/org/${train_set}/spk2sid" \
-                    "${data_feats}${_suf}/${dset}/utt2spk" \
-                    > "${data_feats}${_suf}/${dset}/utt2sid"
-            done
-        fi
-
-        # Prepare lang id input
-        if "${use_lid}"; then
-            log "Stage 2+: Prepare lang id: data/ -> ${data_feats}/"
-            for dset in "${train_set}" "${valid_set}" ${test_sets}; do
-                if [ "${dset}" = "${train_set}" ] || [ "${dset}" = "${valid_set}" ]; then
-                    _suf="/org"
-                else
-                    _suf=""
-                fi
-                if [ "${dset}" = "${train_set}" ]; then
-                    # Make lang2lid
-                    # NOTE(kan-bayashi): 0 is reserved for unknown languages
-                    echo "<unk> 0" > "${data_feats}${_suf}/${dset}/lang2lid"
-                    cut -f 2 -d " " "${data_feats}${_suf}/${dset}/utt2lang" | sort | uniq | \
-                        awk '{print $1 " " NR}' >> "${data_feats}${_suf}/${dset}/lang2lid"
-                fi
-                # NOTE(kan-bayashi): We can reuse the same script for making utt2sid
-                pyscripts/utils/utt2spk_to_utt2sid.py \
-                    "${data_feats}/org/${train_set}/lang2lid" \
-                    "${data_feats}${_suf}/${dset}/utt2lang" \
-                    > "${data_feats}${_suf}/${dset}/utt2lid"
-            done
-        fi
+#        # Prepare spk id input
+#        if "${use_sid}"; then
+#            log "Stage 2+: Prepare speaker id: data/ -> ${data_feats}/"
+#            for dset in "${train_set}" "${valid_set}" ${test_sets}; do
+#                if [ "${dset}" = "${train_set}" ] || [ "${dset}" = "${valid_set}" ]; then
+#                    _suf="/org"
+#                else
+#                    _suf=""
+#                fi
+#                if [ "${dset}" = "${train_set}" ]; then
+#                    # Make spk2sid
+#                    # NOTE(kan-bayashi): 0 is reserved for unknown speakers
+#                    echo "<unk> 0" > "${data_feats}${_suf}/${dset}/spk2sid"
+#                    cut -f 2 -d " " "${data_feats}${_suf}/${dset}/utt2spk" | sort | uniq | \
+#                        awk '{print $1 " " NR}' >> "${data_feats}${_suf}/${dset}/spk2sid"
+#                fi
+#                pyscripts/utils/utt2spk_to_utt2sid.py \
+#                    "${data_feats}/org/${train_set}/spk2sid" \
+#                    "${data_feats}${_suf}/${dset}/utt2spk" \
+#                    > "${data_feats}${_suf}/${dset}/utt2sid"
+#            done
+#        fi
+#
+#        # Prepare lang id input
+#        if "${use_lid}"; then
+#            log "Stage 2+: Prepare lang id: data/ -> ${data_feats}/"
+#            for dset in "${train_set}" "${valid_set}" ${test_sets}; do
+#                if [ "${dset}" = "${train_set}" ] || [ "${dset}" = "${valid_set}" ]; then
+#                    _suf="/org"
+#                else
+#                    _suf=""
+#                fi
+#                if [ "${dset}" = "${train_set}" ]; then
+#                    # Make lang2lid
+#                    # NOTE(kan-bayashi): 0 is reserved for unknown languages
+#                    echo "<unk> 0" > "${data_feats}${_suf}/${dset}/lang2lid"
+#                    cut -f 2 -d " " "${data_feats}${_suf}/${dset}/utt2lang" | sort | uniq | \
+#                        awk '{print $1 " " NR}' >> "${data_feats}${_suf}/${dset}/lang2lid"
+#                fi
+#                # NOTE(kan-bayashi): We can reuse the same script for making utt2sid
+#                pyscripts/utils/utt2spk_to_utt2sid.py \
+#                    "${data_feats}/org/${train_set}/lang2lid" \
+#                    "${data_feats}${_suf}/${dset}/utt2lang" \
+#                    > "${data_feats}${_suf}/${dset}/utt2lid"
+#            done
+#        fi
     fi
 
 

@@ -119,18 +119,18 @@ try:
     del torch_optimizer
 except ImportError:
     pass
-try:
-    import apex
-
-    optim_classes.update(
-        fusedadam=apex.optimizers.FusedAdam,
-        fusedlamb=apex.optimizers.FusedLAMB,
-        fusednovograd=apex.optimizers.FusedNovoGrad,
-        fusedsgd=apex.optimizers.FusedSGD,
-    )
-    del apex
-except ImportError:
-    pass
+# try:
+#     import apex
+#
+#     optim_classes.update(
+#         fusedadam=apex.optimizers.FusedAdam,
+#         fusedlamb=apex.optimizers.FusedLAMB,
+#         fusednovograd=apex.optimizers.FusedNovoGrad,
+#         fusedsgd=apex.optimizers.FusedSGD,
+#     )
+#     del apex
+# except ImportError:
+#     pass
 try:
     import fairscale
 except ImportError:

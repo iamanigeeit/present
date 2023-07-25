@@ -57,6 +57,7 @@ tts_conf:             # keyword arguments for the selected model
     energy_embed_kernel_size: 1                # kernel size of conv embedding layer for energy
     energy_embed_dropout: 0.0                  # dropout rate after conv embedding layer for energy
     stop_gradient_from_energy_predictor: false # whether to stop the gradient from energy predictor to encoder
+    spks: 11
 
 # extra module for additional inputs
 pitch_extract: praat_pitch   # pitch extractor type

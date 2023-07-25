@@ -39,7 +39,7 @@ DEFAULT_FACTOR_CONFIG = {
     'nonvowel_pitch_down': -0.5,
     'vowel_energy_up': 2.0,
     'nonvowel_energy_up': 1.0,
-    'question': True,
+    'question': False,
     'exclamation': False,
 }
 
@@ -72,6 +72,7 @@ class TextEffectProcessor:
         # States
         self.alignments = []
         self.mark_positions = {}
+        self.pitch_values = None
 
     def __str__(self):
         if self.alignments:
@@ -96,7 +97,8 @@ class TextEffectProcessor:
                 longers[graph_positions[mark_pos]-1] += '~'
             return generate_table(
                 grapheme_list=grapheme_list, phoneme_list=phoneme_list,
-                low_tones=low_tones, high_tones=high_tones, emphases=emphases, longers=longers
+                low_tones=low_tones, high_tones=high_tones, emphases=emphases, longers=longers,
+                pitch_values=self.pitch_values
             )
         else:
             return 'TextEffectProcessor: no alignment on text yet'
@@ -219,8 +221,8 @@ class TextEffectProcessor:
         e_factor = [0.0] * factor_len
 
         for longer_pos in self.mark_positions['~']:
-            phone_start, phone_end = g2p_pos[longer_pos]
-            for i in range(phone_start-1, phone_end-1):  # tildes come AFTER the grapheme
+            phone_start, phone_end = g2p_pos[longer_pos-1]  # tildes come AFTER the grapheme
+            for i in range(phone_start, phone_end):
                 d_factor[i] += self.duration_unit
 
         for high_p_pos in self.mark_positions['^']:
@@ -299,14 +301,70 @@ class TextEffectProcessor:
         return d_factor, p_factor, e_factor, d_split_factor
 
 
-    def get_inputs(self, text, has_eos_token=False, print_alignment=False):
+    def get_pitch_values(self, word_tones, words, phonemes, g2p_pos):
+        pitch_values = [[]] * len(phonemes)
+        num_words = len(words)
+        num_tones = len(word_tones)
+        word_i = 0
+        tone_i = 0
+        start_pos = 0
+        while word_i < num_words and tone_i < num_tones:
+            curr_word = words[word_i]
+            find_word, tone, syllable = word_tones[tone_i]
+            if curr_word == find_word:
+                end_pos = start_pos + len(curr_word)
+                phone_start = g2p_pos[start_pos][0]
+                phone_end = g2p_pos[end_pos - 1][1]
+                vowel_count = 0
+                vowel_pos = -1
+                for phone_pos in range(phone_start, phone_end):
+                    if phonemes[phone_pos] in ARPA_VOWELS:
+                        if vowel_count == syllable:
+                            vowel_pos = phone_pos
+                            break
+                        else:
+                            vowel_count += 1
+                if vowel_pos != -1:
+                    pitch_values[vowel_pos] = tone
+                    # mark all leftward consonants as first pitch value in tone
+                    phone_pos = vowel_pos - 1
+                    first_pitch = tone[0]
+                    while phone_pos >= phone_start and phonemes[phone_pos] not in ARPA_VOWELS:
+                        pitch_values[phone_pos] = [first_pitch]
+                        phone_pos -= 1
+                    # mark all rightward consonants as last pitch value in tone
+                    phone_pos = vowel_pos + 1
+                    last_pitch = tone[-1]
+                    while phone_pos < phone_end and phonemes[phone_pos] not in ARPA_VOWELS:
+                        pitch_values[phone_pos] = [last_pitch]
+                        phone_pos += 1
+                tone_i += 1
+                # if there are repeated word_tones, move to the next word
+                if tone_i < num_tones and word_tones[tone_i-1] == word_tones[tone_i]:
+                    start_pos += len(curr_word)
+                    word_i += 1
+            else:
+                start_pos += len(curr_word)
+                word_i += 1
+        self.pitch_values = pitch_values
+        return pitch_values
+
+    def get_inputs(self, text, has_eos_token=False, word_tones=None, print_alignment=False, return_all=False):
         words, _ = self.preprocess(text)
         word_phones = self.phonemize(words)
         _, _, phonemes, g2p_pos = self.get_alignment_data(words, word_phones)
         phone_ids = torch.tensor(self.tokens2ids_fn(phonemes), dtype=torch.int32, device=self.device)
+        d_factor, p_factor, e_factor, d_split_factor = self.get_scale_factors(phonemes, g2p_pos, has_eos_token)
+        if word_tones is None:
+            pitch_values = None
+        else:
+            pitch_values = self.get_pitch_values(word_tones, words, phonemes, g2p_pos)
+
         if print_alignment:
             print(self)
-        d_factor, p_factor, e_factor, d_split_factor = self.get_scale_factors(phonemes, g2p_pos, has_eos_token)
-        return phonemes, phone_ids, d_factor, p_factor, e_factor, d_split_factor
+        if return_all:
+            return phonemes, phone_ids, d_factor, p_factor, e_factor, d_split_factor, pitch_values, words, word_phones, g2p_pos
+        else:
+            return phonemes, phone_ids, d_factor, p_factor, e_factor, d_split_factor, pitch_values
 
 

@@ -4,6 +4,7 @@ import numpy as np
 import torch
 import soundfile as sf
 from pypinyin import lazy_pinyin, Style, load_phrases_dict
+from pywordseg import Wordseg
 from prosody.utils.text import ARPA_VOWELS, PUNCS
 from prosody.utils.utils import get_p_mod_fns, get_d_mod_fns, duration_even_split, print_table
 from prosody.pinyin import regularize_pinyin, NULL_INITIAL
@@ -18,6 +19,7 @@ ADD_PINYIN_PHRASES = {
     '这个': [['zhè'], ['ge']],
     '那个': [['nà'], ['ge']],
     '哪个': [['něi'], ['ge']],
+    '嗯': [['en']],
 }
 load_phrases_dict(ADD_PINYIN_PHRASES)
 
@@ -44,7 +46,7 @@ INITIALS_TO_ARPA_DURATIONS = {
     'g': ('K G',
           '1 0'),
     'k': ('K HH',
-          '1.5 0'),
+          '1.5 0.5'),
     'h': 'HH',
 
     'j': ('T Z',
@@ -250,7 +252,6 @@ PINYIN_WITH_TONE_REGEX = re.compile(
     rf"({'|'.join(INITIALS)})({'|'.join(RIMES)})?([1-5])"
 )
 
-
 class PinyinArpaSpeech:
 
     def __init__(
@@ -263,6 +264,7 @@ class PinyinArpaSpeech:
             tone_combine_fns=TONE_COMBINE_FNS,
             tone5_d_factor=TONE5_D_FACTOR,
             max_pitch_change=MAX_PITCH_CHANGE,
+            segment_chinese=True,
             nucleus_tone_only=False,
     ):
         self.tts_inference_fn = tts_inference_fn
@@ -276,6 +278,9 @@ class PinyinArpaSpeech:
         self.max_pitch_change = max_pitch_change
         self.nucleus_tone_only = nucleus_tone_only
         self.check_consistency()
+        self.segment_chinese = segment_chinese
+        if segment_chinese:
+            self.wordseg = Wordseg(batch_size=1, embedding='elmo', device=DEVICE)
 
     def check_consistency(self):
         pinyin_set = INITIALS | RIMES
@@ -332,8 +337,9 @@ class PinyinArpaSpeech:
 
         self.check_consistency()
 
-    @staticmethod
-    def convert_hanzi_pinyin(hans):
+    def convert_hanzi_pinyin(self, hans):
+        if self.segment_chinese:
+            hans = ' '.join(self.wordseg.cut([hans])[0])
         # pypinyin doesn't handle the sandhi properly!
         pinyin_list = lazy_pinyin(hans, Style.TONE3, neutral_tone_with_five=True, tone_sandhi=False)
         num_words = len(pinyin_list)
@@ -398,7 +404,13 @@ class PinyinArpaSpeech:
         arpa_lens = []
         d_factor = []
         for pinyin in pinyin_list:
-            if pinyin in PUNC_CONVERSION:
+            pinyin = pinyin.strip()
+            if pinyin == '':
+                arpas.append(',')
+                tones.append(0)
+                arpa_lens.append(1)
+                d_factor.append(0.2)
+            elif pinyin in PUNC_CONVERSION:
                 arpas.append(PUNC_CONVERSION[pinyin])
                 tones.append(0)
                 arpa_lens.append(1)
@@ -561,14 +573,15 @@ class PinyinArpaSpeech:
         return self.convert_pinyin_arpa(self.convert_hanzi_pinyin(hans), batch_i)
 
 
-    def gen_inputs(self, chinese, device=DEVICE):
+    def gen_inputs(self, chinese, verbose=False, device=DEVICE):
         if isinstance(chinese, str):
             arpas, tones, d_factor, d_split_factor, pitch_values, p_mod_fns = self.convert_hanzi_arpa(chinese)
         elif isinstance(chinese, list):
             arpas, tones, d_factor, d_split_factor, pitch_values, p_mod_fns = self.convert_pinyin_arpa(chinese)
         else:
             raise NotImplementedError('chinese must be string of characters or list of regularized pinyin')
-        print_table(arpas=arpas, d_factor=d_factor, d_split_factor=d_split_factor, tones=tones, pitch_values=pitch_values)
+        if verbose:
+            print_table(arpas=arpas, d_factor=d_factor, d_split_factor=d_split_factor, tones=tones, pitch_values=pitch_values)
         d_factor = torch.tensor(d_factor, device=device).unsqueeze(0)
         d_split_factor = torch.tensor(d_split_factor, dtype=torch.int32, device=device).unsqueeze(0)
         return arpas, tones, d_factor, d_split_factor, pitch_values, p_mod_fns
@@ -581,8 +594,12 @@ class PinyinArpaSpeech:
             pac_update_dict=None,
             infer_overrides=None,
             overall_d_factor=1.0,
+            fix_durations=True,
             vowel_duration=(9.0, 15.0),
             arpa_in_filename=True,
+            custom_filename='',
+            disable_tones=False,
+            verbose=False,
             device=DEVICE,
     ):
         if pac_update_dict is None:
@@ -590,21 +607,32 @@ class PinyinArpaSpeech:
         if pac_update_dict:
             self.update(**pac_update_dict)
         if inputs is None:
-            arpas, tones, d_factor, d_split_factor, pitch_values, p_mod_fns = self.gen_inputs(chinese)
+            arpas, tones, d_factor, d_split_factor, pitch_values, p_mod_fns = self.gen_inputs(chinese, verbose=verbose)
         else:
             arpas, tones, d_factor, d_split_factor, pitch_values, p_mod_fns = inputs
 
-        d_factor = d_factor * overall_d_factor
-        min_duration = vowel_duration[0] * overall_d_factor
-        max_duration = vowel_duration[1] * overall_d_factor
-        d_mod_fns = get_d_mod_fns(
-            d_split_factor, duration_split_fn=duration_even_split, min_duration=min_duration, max_duration=max_duration
-        )
+        if fix_durations:
+            d_override = overall_d_factor * d_factor / d_split_factor
+            d_factor = None
+            d_mod_fns = None
+        else:
+            d_factor = d_factor * overall_d_factor
+            d_override = None
+            min_duration = vowel_duration[0] * overall_d_factor
+            max_duration = vowel_duration[1] * overall_d_factor
+            d_mod_fns = get_d_mod_fns(
+                d_split_factor, duration_split_fn=duration_even_split, min_duration=min_duration, max_duration=max_duration
+            )
+
+        if disable_tones:
+            p_mod_fns = None
+
         infer_kwargs = {
-            'd_split_factor': d_split_factor,
-            'p_factor': None,
             'd_factor': d_factor,
+            'd_override': d_override,
+            'p_factor': None,
             'e_factor': None,
+            'd_split_factor': d_split_factor,
             'd_mod_fns': d_mod_fns,
             'p_mod_fns': p_mod_fns,
             'e_mod_fns': None,
@@ -616,13 +644,17 @@ class PinyinArpaSpeech:
         with torch.no_grad():
             wav_modified, _ = self.tts_inference_fn(
                     text=phone_ids.unsqueeze(0), text_lengths=torch.tensor([len(phone_ids)], device=device),
-                    verbose=True,
+                    verbose=verbose,
                     **infer_kwargs,
                 )
-            filename = ' '.join(chinese) if isinstance(chinese, list) else chinese
-            if arpa_in_filename:
-                filename = f'{filename}-{"".join(arpas)}'
-            sf.write(save_dir / f'{filename}.wav', wav_modified.squeeze().cpu().numpy(), 22050, "PCM_16")
+            if custom_filename:
+                filename = custom_filename
+            else:
+                filename = ' '.join(chinese) if isinstance(chinese, list) else chinese
+                if arpa_in_filename:
+                    filename = f'{filename}-{"".join(arpas)}'
+                filename = f'{filename}.wav'
+            sf.write(save_dir / filename, wav_modified.squeeze().cpu().numpy(), 22050, "PCM_16")
         return arpas, tones, d_factor, d_split_factor, pitch_values, p_mod_fns
 
 

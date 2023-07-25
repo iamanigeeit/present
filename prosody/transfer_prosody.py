@@ -1,39 +1,43 @@
+import numpy as np
 import torch
+from typing import Union
+import scipy
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 def transfer_prosody(
-        duration_pred, pitch_pred, energy_pred, pitch_range, energy_range,
-        p_reference, e_reference, e_threshold, sil_threshold,
-        is_vowels, is_consonants, avg_energy_window, change_durations,
+        duration_pred, pitch_pred, energy_pred,  # (1, T_text)
+        voiced_frames,  # where raw_pitch == 0 (T_feats)
+        normed_pitch, normed_energy,  # normalized continuous pitch and energy (1, T_feats, 1)
+        is_vowels, is_consonants,  # (1, T_text)
+        change_durations=False,
+        scale_energy=True,
     ):
-        avg_energy = compute_avg_energy(e_reference, duration_pred, window=avg_energy_window)
-        energy = avg_energy.clone()
-        keep_frames = energy > e_threshold
-        energy = energy[keep_frames]
-        pitch = p_reference.squeeze()[keep_frames]
-        pitch = adjust_range(pitch, pitch_range)
-        energy = adjust_range(energy, energy_range)
-        peaks = find_peaks(energy)
+        normed_pitch = normed_pitch.squeeze()
+        normed_energy = normed_energy.squeeze()
+        is_peaks, nonzero_starts, nonzero_ends = find_peaks(normed_energy, voiced_frames)
+        voiced_energy = normed_energy[voiced_frames]
+        voiced_pitch = normed_pitch[voiced_frames]
+        voiced_peaks = is_peaks[voiced_frames]
+        peaks = voiced_peaks.nonzero().squeeze()
         num_peaks = len(peaks)
         num_vowels = sum(is_vowels).item()
         if num_peaks < num_vowels:
             repeats = compute_repeats(num_vowels, num_peaks)
-            peaks, pitch, energy = repeat_peaks(repeats, peaks, num_peaks, pitch, energy)
-            num_peaks = num_vowels
+            peaks, voiced_pitch, voiced_energy = repeat_peaks(repeats, peaks, num_peaks, voiced_pitch, voiced_energy)
         elif num_peaks > num_vowels:
-            peaks = retain_peaks(peaks, len(energy), duration_pred, is_vowels)
-        energy_new = energy_pred.clone()
-        energy_new[is_vowels] = energy[peaks]
-        pitch_new = pitch_pred.clone()
-        pitch_new[is_vowels] = pitch[peaks]
+            peaks = retain_peaks(peaks, len(voiced_energy), duration_pred, is_vowels)
+        energy_new = torch.zeros_like(energy_pred)
+        energy_new[is_vowels] = voiced_energy[peaks]
+        pitch_new = torch.zeros_like(pitch_pred)
+        pitch_new[is_vowels] = voiced_pitch[peaks]
         duration_start = shift_pad(duration_pred.cumsum(0), shift=1)
         phone_positions = duration_start + duration_pred / 2
         phone_positions = add_start_end(phone_positions, 0, duration_pred.sum())
         vowel_indices = torch.nonzero(is_vowels).squeeze()
         vowel_indices = add_start_end(vowel_indices, -1, len(duration_pred))
         phone_positions = add_start_end(phone_positions, 0, duration_pred.sum())
-        peaks = add_start_end(peaks, 0, len(energy))
+        peaks = add_start_end(peaks, 0, len(voiced_energy))
         for start_vowel, end_vowel, start_peak, end_peak in zip(
                 vowel_indices[:-1], vowel_indices[1:], peaks[:-1], peaks[1:]):
             start_peak = start_peak.item()
@@ -49,31 +53,31 @@ def transfer_prosody(
                     consonant_position = phone_positions[phone_i + 1].item()
                     consonant_frame = start_peak + (consonant_position - start_position) / interval * peak_interval
                     floor_frame = int(consonant_frame)
-                    consonant_pitch = pitch[floor_frame] * (floor_frame + 1 - consonant_frame) + \
-                                      pitch[floor_frame + 1] * (consonant_frame - floor_frame)
-                    consonant_energy = energy[floor_frame] * (floor_frame + 1 - consonant_frame) + \
-                                       energy[floor_frame + 1] * (consonant_frame - floor_frame)
+                    consonant_pitch = voiced_pitch[floor_frame] * (floor_frame + 1 - consonant_frame) + \
+                                      voiced_pitch[floor_frame + 1] * (consonant_frame - floor_frame)
+                    consonant_energy = voiced_energy[floor_frame] * (floor_frame + 1 - consonant_frame) + \
+                                       voiced_energy[floor_frame + 1] * (consonant_frame - floor_frame)
                     pitch_new[phone_i] = consonant_pitch
                     energy_new[phone_i] = consonant_energy
         if change_durations:
-            energy_mask = avg_energy > sil_threshold
-            start = 0
-            while not energy_mask[start]:
-                start += 1
-            end = -1
-            while not energy_mask[end]:
-                end -= 1
-            ref_actual_len = len(avg_energy) - start + end + 1
-            ref_syllable_frames = ref_actual_len / num_peaks
+            start = voiced_frames[0].item()
+            end = voiced_frames[-1].item()
+            ref_syllable_frames = (end - start) / num_peaks
             pred_syllable_frames = duration_pred.sum() / num_vowels
-            print(ref_actual_len, num_peaks, ref_syllable_frames, pred_syllable_frames)
             duration_new = duration_pred / pred_syllable_frames * ref_syllable_frames
         else:
             duration_new = duration_pred
+        if scale_energy:
+            pred_mean = energy_pred.mean()
+            pred_std = energy_pred.std()
+            new_mean = energy_new.mean()
+            new_std = energy_new.std()
+            energy_0mean_1std = (energy_new - new_mean) / new_std
+            energy_new = energy_0mean_1std * pred_std + pred_mean
         return duration_new, pitch_new, energy_new
 
 
-def compute_avg_energy(e_reference, duration_pred, window):
+def compute_avg_energy(e_reference, duration_pred, window=8):
     if window <= 0:
         kernel_size = int(torch.round(torch.mean(duration_pred.type(torch.float32))).item())
     else:
@@ -183,7 +187,7 @@ def find_closest_peaks(remaining_peaks, peaks_chosen, peak_fracs, vowel_fracs, e
             return skip_peaks_chosen, skip_error
 
 
-def shift_pad(x, shift, pad=0):
+def shift_pad(x, shift, pad=0) -> torch.Tensor:
     y = x.roll(shift)
     if shift < 0:
         y[shift:] = pad
@@ -192,10 +196,38 @@ def shift_pad(x, shift, pad=0):
     return y
 
 
-def find_peaks(avg_energy):
-    avg_energy_left = shift_pad(avg_energy, -1)
-    avg_energy_right = shift_pad(avg_energy, 1)
-    return torch.nonzero((avg_energy > avg_energy_left) & (avg_energy > avg_energy_right)).squeeze()
+def find_peaks(normed_energy, voiced_frames):
+    '''
+    The process to find peaks: split energy tensor into voiced segments,
+        pad each one with zeros and pick the peak indices, then join.
+    We cannot remove unvoiced samples first, because that might collapse two peaks into one
+        e.g. [5 5 unvoiced 5 5] -> [5 5 5 5].
+    :param energy:
+    :param voiced_frames:
+    :return:
+    '''
+    min_energy = normed_energy.min()
+
+    e = torch.ones_like(normed_energy) * min_energy
+    e[voiced_frames] = normed_energy[voiced_frames]
+    e_right = shift_pad(e, 1, pad=-999)
+    e_left = shift_pad(e, -1, pad=-999)
+    nonzero_starts = ((e != min_energy) & (e_right == min_energy)).nonzero().squeeze()
+    nonzero_ends = ((e != min_energy) & (e_left == min_energy)).nonzero().squeeze()
+    assert len(nonzero_starts) == len(nonzero_ends)
+    splits = []
+    for nonzero_start, nonzero_end in zip(nonzero_starts, nonzero_ends):
+        split = e[nonzero_start:nonzero_end + 1]
+        splits.append(np.pad(split.cpu().numpy(), 1))
+    peaks = []
+    for split, nonzero_start in zip(splits, nonzero_starts.cpu().numpy()):
+        split_peaks = scipy.signal.find_peaks(split, width=3)[0]
+        for split_peak in split_peaks:
+            peaks.append(split_peak + nonzero_start - 1)  # peaks is now aligned to normed_energy
+    is_peaks = torch.zeros_like(normed_energy, dtype=torch.bool)
+    is_peaks[peaks] = True
+    return is_peaks, nonzero_starts, nonzero_ends
+
 
 def add_start_end(x, start_value, end_value):
     y = torch.zeros(len(x) + 2, dtype=x.dtype, device=x.device)

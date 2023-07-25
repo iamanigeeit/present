@@ -22,15 +22,13 @@ from espnet2.gan_tts.hifigan.loss import (
     GeneratorAdversarialLoss,
     MelSpectrogramLoss,
 )
-from espnet2.gan_tts.jets.generator import JETSGenerator
-from espnet2.gan_tts.jets.prosody_generator import JETSProsodyGenerator
-from espnet2.gan_tts.jets.loss import ForwardSumLoss, VarianceLoss
+from espnet2.gan_tts.jets_new.generator import JETSGenerator
+from espnet2.gan_tts.jets_new.loss import ForwardSumLoss, VarianceLoss
 from espnet2.gan_tts.utils import get_segments
 from espnet2.torch_utils.device_funcs import force_gatherable
 
 AVAILABLE_GENERATERS = {
     "jets_generator": JETSGenerator,
-    "jets_prosody_generator": JETSProsodyGenerator,
 }
 AVAILABLE_DISCRIMINATORS = {
     "hifigan_period_discriminator": HiFiGANPeriodDiscriminator,

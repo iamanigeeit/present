@@ -10,7 +10,7 @@ import torch
 import yaml
 from typeguard import check_argument_types, check_return_type
 
-from espnet2.gan_tts.jets_new import JETS
+from espnet2.gan_tts.jets import JETS
 from espnet2.gan_tts.joint import JointText2Wav
 from espnet2.gan_tts.vits import VITS
 from espnet2.layers.abs_normalize import AbsNormalize
@@ -24,7 +24,7 @@ from espnet2.train.trainer import Trainer
 from espnet2.tts.abs_tts import AbsTTS
 from espnet2.tts.espnet_model import ESPnetTTSModel
 from espnet2.tts.fastspeech import FastSpeech
-from espnet2.tts.fastspeech2 import FastSpeech2
+from espnet2.tts.fastspeech2 import FastSpeech2, FS2Prosody
 from espnet2.tts.feats_extract.abs_feats_extract import AbsFeatsExtract
 from espnet2.tts.feats_extract.dio import Dio
 from espnet2.tts.feats_extract.praat_pitch import PraatPitch
@@ -93,6 +93,7 @@ tts_choices = ClassChoices(
         transformer=Transformer,
         fastspeech=FastSpeech,
         fastspeech2=FastSpeech2,
+        fs2_prosody=FS2Prosody,
         prodiff=ProDiff,
         # NOTE(kan-bayashi): available only for inference
         vits=VITS,

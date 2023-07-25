@@ -13,6 +13,7 @@ from espnet2.gan_tts.jets.alignments import (
 )
 from espnet2.gan_tts.jets.generator import JETSGenerator
 from prosody.transfer_prosody import transfer_prosody
+from prosody.utils.utils import expand_embed_duration
 
 
 class JETSProsodyGenerator(JETSGenerator):
@@ -28,7 +29,9 @@ class JETSProsodyGenerator(JETSGenerator):
         sids: Optional[torch.Tensor] = None,
         spembs: Optional[torch.Tensor] = None,
         lids: Optional[torch.Tensor] = None,
+        use_teacher_forcing: bool = False,
         d_factor: Optional[torch.Tensor] = None,
+        d_override: Optional[torch.Tensor] = None,
         p_factor: Optional[torch.Tensor] = None,
         e_factor: Optional[torch.Tensor] = None,
         d_split_factor: Optional[torch.Tensor] = None,
@@ -39,15 +42,10 @@ class JETSProsodyGenerator(JETSGenerator):
         is_consonants: Optional[torch.Tensor] = None,
         pitch_range: Optional[Tuple[float, float]] = None,
         energy_range: Optional[Tuple[float, float]] = None,
-        p_reference: Optional[torch.Tensor] = None,
-        e_reference: Optional[torch.Tensor] = None,
-        p_reference_weight: float = 1.0,
-        e_reference_weight: float = 0.5,
-        e_threshold: float = -1,
-        sil_threshold: float = -1,
-        avg_energy_window: int = 0,
-        change_durations: bool = False,
-        use_teacher_forcing: bool = False,
+        transfer_prosody_args: Optional[dict] = None,
+        force_prosody_args: Optional[dict] = None,
+        p_ref_weight: Optional[float] = None,
+        e_ref_weight: Optional[float] = None,
         verbose: bool = False,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Run inference.
@@ -92,7 +90,6 @@ class JETSProsodyGenerator(JETSGenerator):
 
         h_masks = make_pad_mask(text_lengths).to(hs.device)
 
-        preds = None
         if use_teacher_forcing:
             # forward alignment module and obtain duration, averaged pitch, energy
             log_p_attn = self.alignment_module(hs, feats, h_masks)
@@ -113,9 +110,10 @@ class JETSProsodyGenerator(JETSGenerator):
                 print('Duration pred:', d_outs.squeeze())
                 print('Pitch pred:', p_outs.squeeze())
                 print('Energy pred:', e_outs.squeeze())
-                preds = (d_outs.squeeze(), p_outs.squeeze(), e_outs.squeeze())
             if d_factor is not None:
                 d_outs *= d_factor
+            if d_override is not None:
+                d_outs = d_override
             if p_factor is not None:
                 p_outs += p_factor.unsqueeze(-1)
             if e_factor is not None:
@@ -124,25 +122,38 @@ class JETSProsodyGenerator(JETSGenerator):
                 assert d_split_factor.dtype in {torch.short, torch.int, torch.long}
                 pitch_pred = p_outs.squeeze(-1)
                 energy_pred = e_outs.squeeze(-1)
-                d_outs = self._expand_embed_duration(d_outs, d_split_factor, d_mod_fns)
-                p_outs = self._expand_embed_duration(pitch_pred, d_split_factor, p_mod_fns).unsqueeze(-1)
-                e_outs = self._expand_embed_duration(energy_pred, d_split_factor, e_mod_fns).unsqueeze(-1)
-                hs = self._expand_embed_duration(hs, d_split_factor)
+                d_outs = expand_embed_duration(d_outs, d_split_factor, d_mod_fns)
+                p_outs = expand_embed_duration(pitch_pred, d_split_factor, p_mod_fns).unsqueeze(-1)
+                e_outs = expand_embed_duration(energy_pred, d_split_factor, e_mod_fns).unsqueeze(-1)
+                hs = expand_embed_duration(hs, d_split_factor)
                 text_lengths = d_split_factor.sum(dim=-1)
-            elif p_reference is not None and e_reference is not None:
-                duration_pred = d_outs.squeeze()
-                pitch_pred = p_outs.squeeze()
-                energy_pred = e_outs.squeeze()
-                duration_new, pitch_new, energy_new = transfer_prosody(
-                    duration_pred, pitch_pred, energy_pred, pitch_range, energy_range,
-                    p_reference, e_reference, e_threshold, sil_threshold,
-                    is_vowels, is_consonants, avg_energy_window, change_durations
-                )
-                pitch_new = pitch_new[None].unsqueeze(-1)
-                energy_new = energy_new[None].unsqueeze(-1)
-                d_outs = duration_new[None]
-                p_outs = p_outs * (1-p_reference_weight) + pitch_new * p_reference_weight
-                e_outs = e_outs * (1-e_reference_weight) + energy_new * e_reference_weight
+            elif p_ref_weight is not None and e_ref_weight is not None:
+                if transfer_prosody_args is not None:
+                    duration_pred = d_outs.squeeze()
+                    pitch_pred = p_outs.squeeze()
+                    energy_pred = e_outs.squeeze()
+                    duration_new, pitch_new, energy_new = transfer_prosody(
+                        duration_pred, pitch_pred, energy_pred, **transfer_prosody_args
+                    )
+                    d_outs = duration_new[None]
+                    pitch_new = pitch_new[None].unsqueeze(-1)
+                    energy_new = energy_new[None].unsqueeze(-1)
+                elif force_prosody_args is not None:
+                    if 'duration_new' in force_prosody_args:
+                        d_outs = force_prosody_args['duration_new']
+                    if 'pitch_new' in force_prosody_args:
+                        pitch_new = force_prosody_args['pitch_new']
+                    else:
+                        pitch_new = p_outs
+                    if 'energy_new' in force_prosody_args:
+                        energy_new = force_prosody_args['energy_new']
+                    else:
+                        energy_new = e_outs
+                else:
+                    raise ValueError
+
+                p_outs = p_outs * (1.0 - p_ref_weight) + pitch_new * p_ref_weight
+                e_outs = e_outs * (1.0 - e_ref_weight) + energy_new * e_ref_weight
 
             d_outs = torch.clamp(torch.round(d_outs), min=0).long()
             if verbose:
@@ -203,68 +214,11 @@ class JETSProsodyGenerator(JETSGenerator):
         # forward generator
         wav = self.generator(zs.transpose(1, 2))
 
-        return wav.squeeze(1), d_outs  #, preds
+        output_dic = dict(
+            duration=d_outs.squeeze(),
+            pitch=p_outs.squeeze(),
+            energy=e_outs.squeeze(),
+        )
+        return wav.squeeze(1), d_outs, # output_dic
 
-    def _expand_embed_duration(self, preds, d_split_factor, mod_fns=None):
-        '''
-        To achieve subphoneme control, we use mod_fns to split the phoneme duration into subphoneme durations
-        and set a different pitch/energy for each subphoneme.
 
-        Example with batch size 1: Yes! (with falling tone) -> Y EH1 S
-        ```
-        hs = [[h0, h1, h2]]  # h is a vector with dimension adim 
-        duration_pred = [[3.1, 6.0, 5.2]]
-        pitch_pred = [[0.2, 0.4, -1.0]]
-        energy_pred = [[0.1, 1.5, -0.1]]
-        ```
-
-        If we want the split the phoneme 1 (EH1) into 3 parts, starting at pitch = 2 and dropping to pitch = -2, we let
-        ```
-        d_split_factor = [[1, 3, 1]]
-        mod_fns = {(0, 1): mod_fn_generator([2, -2], combine_fn=None)}  # {(batch_index, phoneme_index): mod_fn}
-
-        pitch_new = [[0.2, 2.0, 0.0, -2.0, -1.0]]
-        ```
-
-        However, we need to maintain the same length of h, duration and energy if we expand phonemes to subphonemes.
-        For duration, we have to pass `mod_fns` such that it splits durations by `d_split_factor`. 
-        ```
-        duration_new = [3.1, 2.0, 2.0, 2.0, 5.2]
-        ```
-        
-        For h and energy, with `mod_fns=None`, we simply repeat them.
-        ```
-        hs_new = [[h0, h1, h1, h1, h2]]
-        energy_new = [[0.1, 1.5, 1.5, 1.5, -0.1]] 
-        ```
-
-        :param preds:
-        :param d_split_factor:
-        :param mod_fns:
-        :return:
-        '''
-        max_t_text = d_split_factor.sum(dim=-1).max().item()
-        if preds.ndim == 3:  # expand h
-            preds_new = torch.zeros((preds.size(0), max_t_text, preds.size(2)), dtype=preds.dtype, device=preds.device)
-            for h, pred_new, d_split in zip(preds, preds_new, d_split_factor):
-                start = 0
-                end = 0
-                for h_vec, split in zip(h, d_split):
-                    end += split.item()
-                    pred_new[start:end, :] = h_vec
-                    start = end
-        else:  # expand duration, pitch, energy
-            if mod_fns is None:
-                mod_fns = {}
-            preds_new = torch.zeros((preds.size(0), max_t_text), dtype=preds.dtype, device=preds.device)
-            for batch_i, (pred, pred_new, d_split) in enumerate(zip(preds, preds_new, d_split_factor)):
-                start = 0
-                end = 0
-                for phone_i, (pred_val, split) in enumerate(zip(pred, d_split)):
-                    end += split.item()
-                    if (batch_i, phone_i) in mod_fns:
-                        pred_new[start:end] = mod_fns[(batch_i, phone_i)](pred_val, split)
-                    else:
-                        pred_new[start:end] = pred_val
-                    start = end
-        return preds_new

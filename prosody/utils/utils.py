@@ -1,6 +1,7 @@
 from tabulate import tabulate
 import numpy as np
 import torch
+import re
 
 def mod_fn_generator(reference_points, combine_fn=None):
     def mod_fn(pred_val, split):
@@ -101,6 +102,8 @@ def generate_table(**kwargs):
                 rows[name] = r
         elif isinstance(row, dict):
             rows.update(row)
+        elif row is None:
+            continue
         else:
             rows[name] = row
     if 'd_split_factor' in rows:
@@ -123,15 +126,15 @@ def generate_table(**kwargs):
                 pitch.append(round_and_join(pitch_new[start:end]))
                 start = end
             rows['pitch_new'] = pitch
-        if 'pitch_values' in rows:
-            flattened = []
-            pitch_values = rows['pitch_values']
-            for i, pitch_value in enumerate(pitch_values):
-                if pitch_value is None:
-                    flattened.append('')
-                else:
-                    flattened.append(round_and_join(pitch_value))
-            rows['pitch_values'] = flattened
+    if 'pitch_values' in rows:
+        flattened = []
+        pitch_values = rows['pitch_values']
+        for i, pitch_value in enumerate(pitch_values):
+            if pitch_value is None:
+                flattened.append('')
+            else:
+                flattened.append(round_and_join(pitch_value))
+        rows['pitch_values'] = flattened
         # if 'p_mod_fns' in rows:
         #     p_mod_fns = rows['p_mod_fns']
         #     p_mods = []
@@ -147,3 +150,71 @@ def generate_table(**kwargs):
     for name, row in rows.items():
         table.append([name] + row)
     return tabulate(table, headers=list(range(-1, len(row)+1)), tablefmt='plain', stralign='center')
+
+
+def expand_embed_duration(preds, d_split_factor, mod_fns=None):
+    '''
+    To achieve subphoneme control, we use mod_fns to split the phoneme duration into subphoneme durations
+    and set a different pitch/energy for each subphoneme.
+
+    Example with batch size 1: Yes! (with falling tone) -> Y EH1 S
+    ```
+    hs = [[h0, h1, h2]]  # h is a vector with dimension adim
+    duration_pred = [[3.1, 6.0, 5.2]]
+    pitch_pred = [[0.2, 0.4, -1.0]]
+    energy_pred = [[0.1, 1.5, -0.1]]
+    ```
+
+    If we want the split the phoneme 1 (EH1) into 3 parts, starting at pitch = 2 and dropping to pitch = -2, we let
+    ```
+    d_split_factor = [[1, 3, 1]]
+    mod_fns = {(0, 1): mod_fn_generator([2, -2], combine_fn=None)}  # {(batch_index, phoneme_index): mod_fn}
+
+    pitch_new = [[0.2, 2.0, 0.0, -2.0, -1.0]]
+    ```
+
+    However, we need to maintain the same length of h, duration and energy if we expand phonemes to subphonemes.
+    For duration, we have to pass `mod_fns` such that it splits durations by `d_split_factor`.
+    ```
+    duration_new = [3.1, 2.0, 2.0, 2.0, 5.2]
+    ```
+
+    For h and energy, with `mod_fns=None`, we simply repeat them.
+    ```
+    hs_new = [[h0, h1, h1, h1, h2]]
+    energy_new = [[0.1, 1.5, 1.5, 1.5, -0.1]]
+    ```
+
+    :param preds:
+    :param d_split_factor:
+    :param mod_fns:
+    :return:
+    '''
+    max_t_text = d_split_factor.sum(dim=-1).max().item()
+    if preds.ndim == 3:  # expand h
+        preds_new = torch.zeros((preds.size(0), max_t_text, preds.size(2)), dtype=preds.dtype, device=preds.device)
+        for h, pred_new, d_split in zip(preds, preds_new, d_split_factor):
+            start = 0
+            end = 0
+            for h_vec, split in zip(h, d_split):
+                end += split.item()
+                pred_new[start:end, :] = h_vec
+                start = end
+    else:  # expand duration, pitch, energy
+        if mod_fns is None:
+            mod_fns = {}
+        preds_new = torch.zeros((preds.size(0), max_t_text), dtype=preds.dtype, device=preds.device)
+        for batch_i, (pred, pred_new, d_split) in enumerate(zip(preds, preds_new, d_split_factor)):
+            start = 0
+            end = 0
+            for phone_i, (pred_val, split) in enumerate(zip(pred, d_split)):
+                end += split.item()
+                if (batch_i, phone_i) in mod_fns:
+                    pred_new[start:end] = mod_fns[(batch_i, phone_i)](pred_val, split)
+                else:
+                    pred_new[start:end] = pred_val
+                start = end
+    return preds_new
+
+def clean_filename(orig_text):
+    return re.sub(r'[^A-Za-z ]', '', orig_text).replace(' ', '_')

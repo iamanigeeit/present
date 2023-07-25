@@ -35,6 +35,7 @@ class PraatPitch(AbsFeatsExtract):
     def __init__(
         self,
         fs: Union[int, str] = 22050,
+        n_fft: int = 1024,
         hop_length: int = 256,
         f0min: int = 75,
         f0max: int = 800,
@@ -42,7 +43,7 @@ class PraatPitch(AbsFeatsExtract):
         use_continuous_f0: bool = True,
         use_log_f0: bool = True,
         reduction_factor: int = None,
-        enable_warnings: bool = True
+        enable_warnings: bool = True,
     ):
         assert check_argument_types()
         super().__init__()
@@ -59,7 +60,8 @@ class PraatPitch(AbsFeatsExtract):
             assert reduction_factor >= 1
         self.reduction_factor = reduction_factor
         self.enable_warnings = enable_warnings
-        self.padding = 2 * hop_length
+        self.stft_pad = n_fft // 2
+        self.praat_pad = 2 * hop_length
 
     def output_size(self) -> int:
         return 1
@@ -127,16 +129,19 @@ class PraatPitch(AbsFeatsExtract):
 
     def _calc_f0_corrected(self, inp: torch.Tensor, feats_length) -> torch.Tensor:
         x = inp.cpu().numpy().astype(np.double)
-        # Praat uses window length of 3.
-        # This padding method gives `floor(input_length / hop_length + 1)` frames, same as LogMelFbank
-        padding = self.padding - (len(inp) % self.hop_length) // 2
-        x = np.pad(x, (padding, padding))
+        # This padding aligns with the melspec
+        x = np.pad(x, (self.stft_pad, self.stft_pad), 'reflect')
+        # This padding accounts for Praat taking 3 hop_length windows to compute pitch
+        total_pad = self.praat_pad - len(x) % self.hop_length
+        left_pad = total_pad // 2
+        right_pad = total_pad - left_pad
+        x = np.pad(x, (left_pad, right_pad))
         sound = parselmouth.Sound(x, self.fs)
         time_step = self.hop_length / self.fs
         pitch = sound.to_pitch(pitch_floor=self.f0min, pitch_ceiling=self.f0max, time_step=time_step)
         f0 = np.array([p[0] for p in pitch.selected_array])
         # len(f0) and feats_length should usually be the same, but could be -1 or 1 due to rounding errors
-        diff = feats_length - len(f0)
+        diff = feats_length.item() - len(f0)
         if diff > 0:
             if self.enable_warnings:
                 logging.warning(f'f0 length ({len(f0)}) shorter than feats length ({feats_length})')

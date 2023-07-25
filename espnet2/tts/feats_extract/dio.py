@@ -39,6 +39,7 @@ class Dio(AbsFeatsExtract):
     def __init__(
         self,
         fs: Union[int, str] = 22050,
+        n_fft: int = 1024,
         hop_length: int = 256,
         f0min: int = 71,
         f0max: int = 800,
@@ -46,12 +47,14 @@ class Dio(AbsFeatsExtract):
         use_continuous_f0: bool = True,
         use_log_f0: bool = True,
         reduction_factor: int = None,
+        **kwargs,  # In case we pass unused params like n_fft
     ):
         assert check_argument_types()
         super().__init__()
         if isinstance(fs, str):
             fs = humanfriendly.parse_size(fs)
         self.fs = fs
+        self.n_fft = n_fft
         self.hop_length = hop_length
         self.frame_period = 1000 * hop_length / fs
         self.f0min = f0min

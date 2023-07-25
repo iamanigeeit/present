@@ -48,11 +48,13 @@ if [ -e activate_python.sh ]; then
     echo "Warning: activate_python.sh already exists. It will be overwritten"
 fi
 
+echo "${output_dir}/etc/profile.d/conda.sh"
 if [ ! -e "${output_dir}/etc/profile.d/conda.sh" ]; then
     if [ ! -e "${script}" ]; then
         # https://docs.conda.io/en/latest/miniconda.html
         wget --tries=3 "https://repo.anaconda.com/miniconda/${script}"
     fi
+
     if "${is_windows}"; then
         echo "Error: Miniconda installation is not supported for Windows for now."
         exit 1
@@ -66,6 +68,7 @@ if [ ! -e "${output_dir}/etc/profile.d/conda.sh" ]; then
         bash "${script}" -b -p "${output_dir}"
     fi
 fi
+
 
 # shellcheck disable=SC1090
 source "${output_dir}/etc/profile.d/conda.sh"
