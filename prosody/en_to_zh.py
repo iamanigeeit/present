@@ -340,41 +340,8 @@ class PinyinArpaSpeech:
     def convert_hanzi_pinyin(self, hans):
         if self.segment_chinese:
             hans = ' '.join(self.wordseg.cut([hans])[0])
-        # pypinyin doesn't handle the sandhi properly!
-        pinyin_list = lazy_pinyin(hans, Style.TONE3, neutral_tone_with_five=True, tone_sandhi=False)
-        num_words = len(pinyin_list)
-        # For simplicity convert alternate tone-3 sandhi so that 3-3-3-3-3 becomes 2-3-2-3-2
-        # The rules are more complicated but no one implements it correctly
-        with_sandhi = []
-        i = 0
-        while i < num_words:
-            pinyin = pinyin_list[i]
-            if pinyin.endswith('3'):
-                add = []
-                while i < num_words and pinyin_list[i].endswith('3'):
-                    add.append(pinyin_list[i])
-                    i += 1
-                for j in range(len(add) - 2, -1, -2):
-                    add[j] = add[j][:-1] + '2'
-                with_sandhi.extend(add)
-            else:
-                with_sandhi.append(pinyin)
-                i += 1
-        # Adjust for 不 and 一
-        for i, han in enumerate(hans[:-1]):
-            if han == '不' and with_sandhi[i + 1].endswith('4'):
-                bu_pinyin = with_sandhi[i]
-                with_sandhi[i] = bu_pinyin[:-1] + '2'
-            elif han == '一':
-                if i == 0 or hans[i - 1] not in '〇零一二三四五六七八九十':
-                    yi_pinyin = with_sandhi[i]
-                    if with_sandhi[i + 1].endswith('4'):
-                        with_sandhi[i] = yi_pinyin[:-1] + '2'
-                    else:
-                        with_sandhi[i] = yi_pinyin[:-1] + '4'
-        # Regularize the pinyin (bo -> buo, ju -> jv, lian -> lien, rui -> ruei, sun -> suen, zun -> zuen)
-        regularized = [regularize_pinyin(pinyin) for pinyin in with_sandhi]
-        return regularized
+        with_sandhi = self.hans_to_pinyin(hans)
+        return [regularize_pinyin(pinyin) for pinyin in with_sandhi]
 
 
     def find_py_units(self, pinyin_unit):
@@ -670,3 +637,38 @@ def all_tones(pinyin):
         with_tones.extend(p + str(x) for x in range(1,5))
     return with_tones
 
+
+def hans_to_pinyin(hans):
+    # pypinyin doesn't handle the sandhi properly!
+    pinyin_list = lazy_pinyin(hans, Style.TONE3, neutral_tone_with_five=True, tone_sandhi=False)
+    num_words = len(pinyin_list)
+    # For simplicity convert alternate tone-3 sandhi so that 3-3-3-3-3 becomes 2-3-2-3-2
+    # The rules are more complicated but no one implements it correctly
+    with_sandhi = []
+    i = 0
+    while i < num_words:
+        pinyin = pinyin_list[i]
+        if pinyin.endswith('3'):
+            add = []
+            while i < num_words and pinyin_list[i].endswith('3'):
+                add.append(pinyin_list[i])
+                i += 1
+            for j in range(len(add) - 2, -1, -2):
+                add[j] = add[j][:-1] + '2'
+            with_sandhi.extend(add)
+        else:
+            with_sandhi.append(pinyin)
+            i += 1
+    # Adjust for 不 and 一
+    for i, han in enumerate(hans[:-1]):
+        if han == '不' and with_sandhi[i + 1].endswith('4'):
+            bu_pinyin = with_sandhi[i]
+            with_sandhi[i] = bu_pinyin[:-1] + '2'
+        elif han == '一':
+            if i == 0 or hans[i - 1] not in '〇零一二三四五六七八九十':
+                yi_pinyin = with_sandhi[i]
+                if with_sandhi[i + 1].endswith('4'):
+                    with_sandhi[i] = yi_pinyin[:-1] + '2'
+                else:
+                    with_sandhi[i] = yi_pinyin[:-1] + '4'
+    return with_sandhi
