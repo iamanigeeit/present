@@ -106,7 +106,7 @@ def get_parser():
     parser.add_argument(
         "--text_cleaner",
         type=str,
-        default="tacotron",
+        default=None,
         help="Name of the text cleaner from ESPnet.",
     )
     parser.add_argument(
@@ -349,7 +349,9 @@ def make_labs(args):
         args.text_cleaner = None
 
     corpus_dir = Path(args.corpus_dir)
-    cleaner = TextCleaner(args.text_cleaner)
+    cleaner = None
+    if args.text_cleaner is not None:
+        cleaner = TextCleaner(args.text_cleaner)
 
     frontend = None
     if args.g2p_model.startswith("pyopenjtalk"):
@@ -371,14 +373,17 @@ def make_labs(args):
         with open(dset / "text", encoding="utf-8") as reader:
             for line in reader:
                 utt, text = line.strip().split(maxsplit=1)
-                text = cleaner(text).lower()
+                if cleaner is not None:
+                    text = cleaner(text).lower()
+                else:
+                    text = text.lower()
                 # Convert single quotes into double quotes
                 #   so that MFA doesn't confuse them with clitics.
                 # Find ' not preceded by a letter to the last ' not followed by a letter
                 text = re.sub(r"(\W|^)'(\w[\w .,!?']*)'(\W|$)", r'\1"\2"\3', text)
 
                 # Remove braces because MFA interprets them as enclosing a single word
-                text = re.sub(r"[\{\}]", '', text)
+                text = re.sub(r"[\{\}]", "", text)
 
                 # In case of frontend, preprocess data.
                 if frontend is not None:
@@ -391,7 +396,7 @@ def make_labs(args):
                     ) as writer:
                         writer.write(text)
                 except KeyError:
-                    logging.warning(f'{utt} is in text file but not in utt2spk')
+                    logging.warning(f"{utt} is in text file but not in utt2spk")
 
         # Generate wavs according to wav.scp and segment files
         if (dset / "segments").exists():
@@ -404,7 +409,7 @@ def make_labs(args):
                         dst_file = (corpus_dir / spk / f"{utt}.wav").as_posix()
                         sf.write(dst_file, array, rate)
                     except KeyError:
-                        logging.warning(f'{utt} is in wav.scp file but not in utt2spk')
+                        logging.warning(f"{utt} is in wav.scp file but not in utt2spk")
         else:
             with open(dset / "wav.scp") as reader:
                 for line in reader:
@@ -421,7 +426,7 @@ def make_labs(args):
                             rate, array = kaldiio.load_mat(src_file)
                             sf.write(dst_file.as_posix(), array, rate)
                     except KeyError:
-                        logging.warning(f'{utt} is in wav.scp file but not in utt2spk')
+                        logging.warning(f"{utt} is in wav.scp file but not in utt2spk")
     logging.info("Finished writing .lab files")
 
 
