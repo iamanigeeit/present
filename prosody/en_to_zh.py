@@ -1,58 +1,47 @@
 import itertools
-import re
+from pathlib import Path
+import regex as re
 import numpy as np
 import torch
 import soundfile as sf
-from pypinyin import lazy_pinyin, Style, load_phrases_dict
 from pywordseg import Wordseg
 from prosody.utils.text import ARPA_VOWELS, PUNCS
 from prosody.utils.utils import get_p_mod_fns, get_d_mod_fns, duration_even_split, print_table
-from prosody.pinyin import regularize_pinyin, NULL_INITIAL
+from prosody.pinyin import (hans_to_pinyins, regularize_pinyin, NULL_INITIAL, VALID_PINYIN_REGEX,
+                            INITIALS as INITIALS_LIST, RIMES as RIMES_LIST)
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-ADD_PINYIN_PHRASES = {
-    '很长': [['hěn'], ['cháng']],
-    '多长': [['duō'], ['cháng']],
-    '真长': [['zhēn'], ['cháng']],
-    '越长': [['yuè'], ['cháng']],
-    '这个': [['zhè'], ['ge']],
-    '那个': [['nà'], ['ge']],
-    '哪个': [['něi'], ['ge']],
-    '嗯': [['en']],
-}
-load_phrases_dict(ADD_PINYIN_PHRASES)
 
 
 INITIALS_TO_ARPA_DURATIONS = {
     'ʔ': (',',
           '0.2'),
 
-    'b': ('P B',
+    'b': ('B P',
           '1 0'),
     'p': ('P HH',
-          '1.5 0.5'),
+          '1 0.5'),
     'm': 'M',
     'f': 'F',
 
-    'd': ('T D ',
+    'd': ('D T',
           '1 0'),
     't': ('T HH',
-          '1.5 0.5'),
+          '1 0.5'),
     'n': 'N',
     'l': (', L',
-          '0 0.5'),
+          '0 1'),
 
-    'g': ('K G',
+    'g': ('G K',
           '1 0'),
     'k': ('K HH',
-          '1.5 0.5'),
+          '1 0.5'),
     'h': 'HH',
 
-    'j': ('T Z',
-          '1 0'),
+    'j': ('T S SH',
+          '0.5 0.5 0'),
     'q': ('T CH HH',
-          '0.5 0.5 0.5'),
+          '0 1 0.5'),
     'x': ('SH S',
           '1 0'),
 
@@ -66,71 +55,89 @@ INITIALS_TO_ARPA_DURATIONS = {
     'z': ('T S',
           '0.5 0.5'),
     'c': ('T S HH',
-          '0.5 0.5 0.5'),
+          '0.3 0.3 0.7'),
     's': 'S',
 
     'y': 'Y',
-    'w': 'W'
+    'w': 'W',
 }
 
 RIMES_TO_ARPA_DURATIONS = {
-    'ɨ': 'UH1',
+    'ɨ': ('Z UH1',
+          '0.5 2'),
     'a': ('AH1 AA1 ,',
           '1.5  0 0'),
-    'ai': 'AY1',
+    'ai': ('AY1', '2'),
     'an': ('AH1 N',
-           '1 1'),
+           '1.5 0.5'),
     'ang': ('AH1 NG',
-            '1 1'),
-    'ao': 'AA1 W',
+            '1.5 0.5'),
+    'ao': ('AA1 AW1',
+           '0.5 1.5'),
 
     'e': ('UH1 AH1 ,',
-          '0 1 0'),
-    'ei': 'EY1',
-    'en': 'UH1 N',
-    'eng': 'UH1 NG',
+          '0 1.5 0'),
+    'ei': ('EY1', '1.5'),
+    'en': ('UH1 N',
+           '1.5 0.5'),
+    'eng': ('UH1 NG',
+            '1.5 0.5'),
 
-    'er': ('AH1 R',
-           '1.5 1'),
+    'er': ('ER1',
+           '1.5'),
 
     'i': ('IY1 ,',
           '1.5 0'),
-    'ia': 'Y AH1',
-    'iang': 'Y AH1 NG',
-    'iao': 'Y AW1',
-    'ie': 'Y EH1',
-    'ien': 'Y EH1 N',
+    'ia': ('Y AH1',
+           '0.5 1.5'),
+    'iang': ('Y AH1 NG',
+             '0.5 1 0.5'),
+    'iao': ('Y AW1',
+            '0.5 1'),
+    'ie': ('Y EH1',
+           '0.5 1'),
+    'ien': ('Y EH1 N',
+            '0.5 1 0.5'),
     'in': ('IH1 IY1 N',
-           '1 0 1'),
+           '1 0 0.5'),
     'ing': ('IH1 IY1 NG',
             '1 0 1'),
-    'iong': 'Y OW1 NG',
-    'iu': 'Y OW1',
+    'iong': ('Y OW1 NG',
+             '0.5 1 1'),
+    'iu': ('Y OW1',
+           '0.5 1'),
 
     'o': ('AO1 W',
           ' 1  0'),
-    'ou': 'OW1',
-    'ong': 'OW1 NG',
+    'ou': ('OW1', '1.5'),
+    'ong': ('OW1 NG',
+            '1.5 0.5'),
 
     'u': ('W UW1 ,',
-          '0  1  0'),
-    'ua': 'W AA1',
-    'uai': 'W AA1 Y',
-    'uan': 'W AH1 N',
-    'uang': 'W AH1 NG',
-    'ui': 'W EY1',
-    'un': 'W UH1 N',
+          '0  1.5  0'),
+    'ua': ('W AA1',
+           '0.5 1'),
+    'uai': ('W AA1 Y',
+            '0.5 1 0.5'),
+    'uan': ('W AH1 N',
+            '0.5 1 0.5'),
+    'uang': ('W AH1 NG',
+             '1 1 1'),
+    'ui': ('W EY1',
+           '0.5 1'),
+    'un': ('W UH1 N',
+           '0.5 1 0.5'),
     'uo': ('UH1 AO1',
-           '0.5 0.5'),
+           '0.8 0.8'),
 
-    'v': ('UW1 IY1 ,',
-          '0 1 0'),
-    've': ('W EH1',
-           '1 1'),
-    'vn': ('UW1 IY1 N',
-           '0  1 1'),
+    'v': ('UH1 Y',
+          '0.5 1.5'),
+    've': ('Y UW1 EH1 ,',
+           '0 0.5 1 0'),
+    'vn': ('UH1 Y N',
+           '1 0.5 0.5'),
     'ven': ('W EH1 N',
-            '1 1 1'),
+            '0.5 1 0.5'),
 }
 
 CUSTOM_ARPA_DURATIONS = {
@@ -139,71 +146,81 @@ CUSTOM_ARPA_DURATIONS = {
     'ʔe': (', UH1 AH1 ,',
            '0.2 0.5 1 0'),
 
+    'cɨ': ('T    S  HH UH1 R',
+           '0.5 0.5 0.5 0  1'),  # vowel should be Z UH but HH + Z fails
     'chɨ': ('CH HH R R',
             '1 0.5 1 1'),
 
-    'da': ('T D AA1 ,',
-           '1 0 1 0'),
-    'di': ('T T D IY1 ,',
-           '1 0 0 1.5 0'),
-    'die': ('T T D Y EH1',
-            '1 0 0 1  1'),
-    'din': ('T T D IH1 IY1 N',
-            '1 0 0  1   0  1'),
-    'ding': ('T T D IH1 IY1 NG',
-             '1 0 0  1   0  1'),
-    'diou': ('T T D Y OW1',
-             '1 0 0 1 1'),
-    'du': ('T D UW1 W',
-           '1 0 1 0'),
-    'duen': ('T T D W UH1 N',
-             '0 1 0 1 1 1'),
+    # 'da': ('T D AA1 ,',
+    #        '1 0 1 0'),
+    # 'di': ('T T D IY1 ,',
+    #        '1 0 0 1.5 0'),
+    # 'die': ('T T D Y EH1',
+    #         '1 0 0 1  1'),
+    # 'din': ('T T D IH1 IY1 N',
+    #         '1 0 0  1   0  1'),
+    # 'ding': ('T T D IH1 IY1 NG',
+    #          '1 0 0  1   0  1'),
+    # 'diou': ('T T D Y OW1',
+    #          '1 0 0 1 1'),
+    # 'du': ('T D UW1 W',
+    #        '1 0 1 0'),
+    # 'dun': ('T T D W UH1 N',
+    #         '0 1 0 1 1 1'),
+    #
+    # 'gu': ('K G W UW1',
+    #        '1 0 0 1'),
 
-    'gu': ('K G W UW1',
-           '1 0 0 1'),
-
-    'houng': ('HH OW1 UW1 NG',
-              '1 0.5 0.5 1'),
+    'hong': ('HH OW1 UW1 NG',
+             '1 0.5 0.5 1'),
     'hu': ('HH HH UW1',
-           '1 0 1'),
+           '1 0 1.5'),
 
-    'lv': ('L HH W IY1 ,',
-           '0.5 0 0 1 0'),
+    'lve': ('L UH1 Y EH1',
+            '1 0.5 0.5 0.5'),
 
     'neng': ('N AH1 UH1 NG',
              '1 0 1 1'),
-    'noung': ('N UH1 OW1 NG',
-              '1 0 1 1'),
-    'qv': ('T SH HH W IY1 ,',
-           '0.5 0.5 0.5 0 1 0'),
-    'qvn': ('T SH HH UW1 IY1 N ,',
-            '0.5 0.5 0 0 1 1 0'),
-    'rɨ': ('ZH R',
-           '1  3'),
+    'nong': ('N UH1 OW1 NG',
+             '1 0 1 1'),
+    'nve': ('N UH1 Y EH1',
+            '1 0.5 0.5 0.5'),
+    # 'qv': ('T SH HH W IY1 ,',
+    #        '0.5 0.5 0.5 0 1 0'),
+    # 'qvn': ('T   SH HH UW1 IY1 N ,',
+    #         '0.5 0.5 0  0   1  1 0'),
+    'rɨ': ('R R',
+            '1 1'),
+    'ren': ('R AH0 N',
+            '1 1.5 1'),
+
     'shɨ': 'SH R R',
 
     'tuo': ('TH T HH UH1 AO1',
             '0 1 0.5 0.5 0.5'),
 
     'wa': 'W AA1',
+    'wo': ('W UH1 AO1',
+           '0.8 0.8 0.8'),
     'wu': ('W UW1 W',
            '1 1 0'),
-    'xve': 'SH W EH1',
-    'xven': 'SH W EH1 N',
+    'xve': ('SH W EH1 ,',
+            '1 0.5 1 0'),
+    'xven': ('SH W EH1 N',
+             '1 0.5 1 1'),
     'ye': 'Y EH1',
     'yen': 'Y EH1 N',
     'yve': ('Y UH1 EH1',
             '1 0.5 0.5'),
     'yven': ('Y UH1 EH1 N',
              '1 0.5 0.5 1'),
-    'yvn': ('Y UH1 Y N',
-            '1 1 0 1'),
+    # 'yvn': ('Y UH1 Y N',
+    #         '1 1 0 1'),
     'zheng': ('T SH AH1 UH1 NG',
-              '1 0 0 1 1'),
-    'zhɨ': ('CH R R',
-            '0.5 1 1'),
-    'zɨ': ('T Z UH1',
-           '1 0.5 0.5'),
+              '1 0   0   1  1'),
+
+    'zhɨ': ('CH R UH1 R',
+            '1 0.5 1 0'),
 }
 
 PINYIN_TO_ARPA_DURATIONS = INITIALS_TO_ARPA_DURATIONS | \
@@ -220,7 +237,7 @@ TONE_DURATION_SPLIT = {
 
 TONE_CONTOURS = {
     1: [2.0],
-    2: [-1.0, 2.0],
+    2: [-1.0, 1.0],
     3: [-1.0, -2.0, -1.0],
     4: [2.0, -1.0],
     5: [0.0],
@@ -235,10 +252,16 @@ TONE_COMBINE_FNS = {
 }
 
 TONE5_D_FACTOR = 0.7
+WORD_PAUSE = 0.2
 MAX_PITCH_CHANGE = 2.5
 
+# These are the phonemes to split duration on
 SPLIT_VOWELS = {'R'} | ARPA_VOWELS
-NUCLEUS_VOWELS = {'W', 'Y'} | SPLIT_VOWELS
+# These are the phonemes to apply tone contour on
+NUCLEUS_VOWELS = {'W', 'Y', 'Z'} | SPLIT_VOWELS
+# These are BOTH initials and vowels. Skip contour if used as initial
+INITIAL_VOWELS = {'R', 'W', 'Y'}
+
 PUNC_CONVERSION = {
     '，': ',',
     '。': '.',
@@ -246,11 +269,15 @@ PUNC_CONVERSION = {
     '！': '!'
 }
 
+
 INITIALS = set(INITIALS_TO_ARPA_DURATIONS)
 RIMES = set(RIMES_TO_ARPA_DURATIONS)
+assert INITIALS == set(INITIALS_LIST)
+assert RIMES == set(RIMES_LIST)
 PINYIN_WITH_TONE_REGEX = re.compile(
-    rf"({'|'.join(INITIALS)})({'|'.join(RIMES)})?([1-5])"
+    rf"({'|'.join(INITIALS)})({'|'.join(RIMES)})([1-5])"
 )
+
 
 class PinyinArpaSpeech:
 
@@ -265,7 +292,8 @@ class PinyinArpaSpeech:
             tone5_d_factor=TONE5_D_FACTOR,
             max_pitch_change=MAX_PITCH_CHANGE,
             segment_chinese=True,
-            nucleus_tone_only=False,
+            nucleus_tone_only=True,
+            tone_interpolation=False,
     ):
         self.tts_inference_fn = tts_inference_fn
         self.token_id_converter = token_id_converter
@@ -277,6 +305,7 @@ class PinyinArpaSpeech:
         self.tone5_d_factor = tone5_d_factor
         self.max_pitch_change = max_pitch_change
         self.nucleus_tone_only = nucleus_tone_only
+        self.tone_interpolation = tone_interpolation
         self.check_consistency()
         self.segment_chinese = segment_chinese
         if segment_chinese:
@@ -321,6 +350,7 @@ class PinyinArpaSpeech:
             tone5_d_factor=None,
             max_pitch_change=None,
             nucleus_tone_only=None,
+            tone_interpolation=None,
     ):
         if pinyin_to_arpa_durations:
             self.update_arpa_durations(pinyin_to_arpa_durations, verbose=True)
@@ -334,15 +364,51 @@ class PinyinArpaSpeech:
             self.max_pitch_change = max_pitch_change
         if nucleus_tone_only is not None:
             self.nucleus_tone_only = nucleus_tone_only
+        if tone_interpolation is not None:
+            self.tone_interpolation = tone_interpolation
 
         self.check_consistency()
 
-    def convert_hanzi_pinyin(self, hans):
+    def convert_hanzi_with_pinyin(self, chinese):
+        orig_pinyins = re.sub(r'[^ a-zü0-9]', '', chinese).strip().split()
+        reg_pinyins = regularize_pinyin(orig_pinyins)
         if self.segment_chinese:
-            hans = ' '.join(self.wordseg.cut([hans])[0])
-        with_sandhi = self.hans_to_pinyin(hans)
-        return [regularize_pinyin(pinyin) for pinyin in with_sandhi]
+            hans = re.sub(r'[ a-zü0-9]', '', chinese)
+            pinyins = self.align_segments(hans, reg_pinyins)
+        else:
+            pinyins = reg_pinyins
+        return pinyins
 
+    def align_segments(self, hans, reg_pinyins):
+        assert len(re.sub(r'\P{Han}', '', hans)) == len(reg_pinyins), \
+            f'Mismatched hans and pinyins length: {hans} {reg_pinyins}'
+        # hans can have punctuation, reg_pinyins cannot
+        start = 0
+        end = 0
+        pinyins = []
+        words = self.wordseg.cut([hans])[0]
+        if not words:  # weird error where sometimes wordseg returns nothing
+            self.wordseg = Wordseg(batch_size=1, embedding='elmo', device=DEVICE)
+            words = self.wordseg.cut([hans])[0]
+        for word in words:
+            if re.search(r'\p{Han}', word) is None:  # punctuation
+                pinyins.append(word)
+            else:
+                end += len(word)
+                pinyins.extend(reg_pinyins[start:end])
+                pinyins.append(' ')
+                start = end
+        return pinyins
+
+    def convert_hanzi_to_pinyin(self, hans):
+        with_sandhi = hans_to_pinyins(hans)
+        reg_pinyins = regularize_pinyin(with_sandhi)
+        if self.segment_chinese:
+            reg_pinyins = [p for p in reg_pinyins if VALID_PINYIN_REGEX.fullmatch(p) is not None]
+            pinyins = self.align_segments(hans, reg_pinyins)
+        else:
+            pinyins = reg_pinyins
+        return pinyins
 
     def find_py_units(self, pinyin_unit):
         if pinyin_unit in self.pinyin_to_arpa:
@@ -365,7 +431,7 @@ class PinyinArpaSpeech:
             rime_arpas, rime_d_factor = self.find_py_units(rime)
             return init_arpas + rime_arpas, init_d_factor + rime_d_factor
 
-    def convert_pinyin_arpa(self, pinyin_list, batch_i=0):
+    def convert_pinyins_to_arpa(self, pinyin_list, batch_i=0):
         tones = []
         arpas = []
         arpa_lens = []
@@ -376,7 +442,7 @@ class PinyinArpaSpeech:
                 arpas.append(',')
                 tones.append(0)
                 arpa_lens.append(1)
-                d_factor.append(0.2)
+                d_factor.append(WORD_PAUSE)
             elif pinyin in PUNC_CONVERSION:
                 arpas.append(PUNC_CONVERSION[pinyin])
                 tones.append(0)
@@ -399,7 +465,7 @@ class PinyinArpaSpeech:
                     arpa_lens.append(len(word_arpas))
                     d_factor.extend(word_d_factor)
 
-        # arpas is now a list of word_arpas and punctuation e.g. [[T S AW1], [AH1, N], '.']
+        # arpas is now a list of word_arpas and punctuation e.g. [[T S AW1], [AH1 N], '.']
         joined_arpas = [arpa for word_arpas in arpas for arpa in word_arpas]
         all_tones = [0] * len(joined_arpas)
         arpa_offsets = list(itertools.accumulate(arpa_lens, initial=0))
@@ -410,19 +476,21 @@ class PinyinArpaSpeech:
             if isinstance(word_arpas, str):  # this is punctuation
                 continue
 
-            for i, arpa in enumerate(word_arpas):
-                if arpa in SPLIT_VOWELS and d_factor[offset+i] and not (arpa == 'R' and pinyin.startswith('r')):
-                    # Split if vowel and on duration > 0; but do not split pinyin r-
+            start_i = int(word_arpas[0] in INITIAL_VOWELS)  # do not split on initial R, W, Y
+            for i in range(start_i, len(word_arpas)):
+                arpa = word_arpas[i]
+                if arpa in SPLIT_VOWELS and d_factor[offset + i]:
                     d_split_factor[offset + i] = self.tone_duration_split[tone]
 
         # Set pitch_values and p_mod_fns
         pitch_values = [[]] * len(d_factor)
         combine_fns = [None] * len(d_factor)
         last_pitch = 0.0
-        for word_i, (word_arpas, tone, offset) in enumerate(zip(arpas, tones, arpa_offsets[:-1])):
+        for word_i, (word_arpas, tone, word_start, word_end) in enumerate(
+                zip(arpas, tones, arpa_offsets[:-1], arpa_offsets[1:])):
 
             if isinstance(word_arpas, str):  # punctuation should take last pitch
-                pitch_values[offset] = [last_pitch]
+                pitch_values[word_start] = [last_pitch]
                 continue
 
             nucleus_start = 0
@@ -431,61 +499,75 @@ class PinyinArpaSpeech:
             nucleus_end = nucleus_start + 1
             while nucleus_end < len(word_arpas) and word_arpas[nucleus_end] in NUCLEUS_VOWELS:
                 nucleus_end += 1
-            nucleus_start += offset
-            nucleus_end += offset
+            nucleus_start += word_start
+            nucleus_end += word_start
 
             if self.nucleus_tone_only:
                 tone_start = nucleus_start
                 tone_end = nucleus_end
             else:
-                tone_start = offset
-                tone_end = arpa_offsets[word_i + 1]
+                tone_start = word_start
+                tone_end = word_end
 
             for i in range(tone_start, tone_end):
                 all_tones[i] = tone
 
+            combine_fn = self.tone_combine_fns[tone]
             if tone == 5:
                 for i in range(tone_start, tone_end):
                     d_factor[i] = self.tone5_d_factor * d_factor[i]
                     pitch_values[i] = self.tone_contours[5]
-                    combine_fns[i] = self.tone_combine_fns[5]
-                last_pitch = pitch_values[i][-1]
-                continue
-
-            contour = self.tone_contours[tone]
-            combine_fn = self.tone_combine_fns[tone]
-            refs = len(contour)
-            if refs == 1:
-                for i in range(tone_start, tone_end):
-                    pitch_values[i] = contour[:]  # take the slice or modifying pitch_values[i] will affect contour!!
                     combine_fns[i] = combine_fn
             else:
-                has_initial = int(tone_start < nucleus_start)  # for self.nucleus_tone_only = False
-                has_final = int(tone_end > nucleus_end)
-                split_offsets = list(
-                    itertools.accumulate(d_split_factor[nucleus_start:nucleus_end], initial=has_initial)
-                )
-                splits = split_offsets[-1]
-                splits += has_final
-                assert splits > 1, 'Total d_split_factor across phonemes having tones must be >1 to interpolate pitch'
-                word_pitches = np.interp(
-                    np.arange(splits) / (splits - 1) * (refs - 1), list(range(refs)), contour
-                ).tolist()
-                # print(has_initial, has_final, split_offsets, splits, word_arpas, pitch_values)
-                for i in range(tone_start, nucleus_start):
-                    pitch_values[i] = word_pitches[:1]
+                contour = self.tone_contours[tone]
+                refs = len(contour)
+                if refs == 1:
+                    for i in range(tone_start, tone_end):
+                        pitch_values[i] = contour[:]  # slicing or modifying pitch_values[i] will affect contour!!
+                        combine_fns[i] = combine_fn
+                else:
+                    has_initial = int(tone_start < nucleus_start)  # for self.nucleus_tone_only = False
+                    has_final = int(tone_end > nucleus_end)
+                    split_offsets = list(
+                        itertools.accumulate(d_split_factor[nucleus_start:nucleus_end], initial=has_initial)
+                    )
+                    splits = split_offsets[-1]
+                    splits += has_final
+                    assert splits > 1, (
+                        f'Total d_split_factor across phonemes having tones must be >1 to interpolate pitch\n'
+                        f'Pinyins: {" ".join(pinyin_list)}\n'
+                        f'Word: {" ".join(word_arpas)}'
+                    )
+                    word_pitches = np.interp(
+                        np.arange(splits) / (splits - 1) * (refs - 1), list(range(refs)), contour
+                    ).tolist()
+                    # print(has_initial, has_final, split_offsets, splits, word_arpas, pitch_values)
+                    for i in range(tone_start, nucleus_start):
+                        pitch_values[i] = word_pitches[:1]
+                        combine_fns[i] = combine_fn
+                    for i, split_start, split_end in zip(
+                            range(nucleus_start, nucleus_end), split_offsets[:-1], split_offsets[1:]):
+                        pitch_values[i] = word_pitches[split_start:split_end]
+                        combine_fns[i] = combine_fn
+                    for i in range(nucleus_end, tone_end):
+                        pitch_values[i] = word_pitches[-1:]
+                        combine_fns[i] = combine_fn
+
+            last_pitch = pitch_values[tone_end-1][-1]
+
+            if self.nucleus_tone_only and not self.tone_interpolation:
+                # Set initials / finals tone according to start/end of nucleus tone
+                start_pitch = pitch_values[nucleus_start][0]
+                end_pitch = pitch_values[nucleus_end - 1][-1]
+                for i in range(word_start, nucleus_start):
+                    pitch_values[i] = [start_pitch]
                     combine_fns[i] = combine_fn
-                for i, split_start, split_end in zip(
-                        range(nucleus_start, nucleus_end), split_offsets[:-1], split_offsets[1:]):
-                    pitch_values[i] = word_pitches[split_start:split_end]
+                for i in range(nucleus_end, word_end):
+                    pitch_values[i] = [end_pitch]
                     combine_fns[i] = combine_fn
-                for i in range(nucleus_end, tone_end):
-                    pitch_values[i] = word_pitches[-1:]
-                    combine_fns[i] = combine_fn
-            last_pitch = pitch_values[i][-1]
 
         # Fill in Nones by interpolating if initials / finals have no tone
-        if self.nucleus_tone_only:
+        if self.nucleus_tone_only and self.tone_interpolation:
             last_pitch = None
             i = 0
             pitch_value = pitch_values[0]
@@ -515,13 +597,20 @@ class PinyinArpaSpeech:
                     i += 1
                     pitch_value = pitch_values[i]
         else:
-            for pitch_value in pitch_values:
-                assert pitch_value, str(pitch_values)
+            try:
+                for i, pitch_value in enumerate(pitch_values):
+                    assert pitch_value
+            except AssertionError:
+                arpa_list = [a for arpa in arpas for a in arpa]
+                print(f'Pitch missing at position {i}\n'
+                      f'Pinyin: {" ".join(pinyin_list)}\n')
+                print_table(arpas=arpa_list, pitch=pitch_values)
+                raise
 
         # Smooth abrupt changes
         if self.max_pitch_change:
             for word_start, word_end in zip(arpa_offsets[1:-1], arpa_offsets[2:]):
-                last_pitch = pitch_values[word_start-1][-1]
+                last_pitch = pitch_values[word_start - 1][-1]
                 curr_pitch = pitch_values[word_start][0]
                 pitch_change = abs(curr_pitch - last_pitch)
                 if pitch_change > self.max_pitch_change:
@@ -536,19 +625,30 @@ class PinyinArpaSpeech:
         p_mod_fns = get_p_mod_fns(pitch_values, combine_fns, batch_i)
         return joined_arpas, all_tones, d_factor, d_split_factor, pitch_values, p_mod_fns
 
-    def convert_hanzi_arpa(self, hans, batch_i=0):
-        return self.convert_pinyin_arpa(self.convert_hanzi_pinyin(hans), batch_i)
+    def convert_hanzi_to_arpa(self, hans, batch_i=0):
+        pinyins = self.convert_hanzi_to_pinyin(hans)
+        return self.convert_pinyins_to_arpa(pinyins, batch_i)
 
-
-    def gen_inputs(self, chinese, verbose=False, device=DEVICE):
+    def gen_inputs(self, chinese, verbose=False, add_full_stop=False, device=DEVICE):
         if isinstance(chinese, str):
-            arpas, tones, d_factor, d_split_factor, pitch_values, p_mod_fns = self.convert_hanzi_arpa(chinese)
+            if re.search('[a-z][0-5]', chinese) is None:
+                if add_full_stop:
+                    chinese.append('.')
+                arpas, tones, d_factor, d_split_factor, pitch_values, p_mod_fns = self.convert_hanzi_to_arpa(chinese)
+            else:  # includes pinyin
+                pinyins = self.convert_hanzi_with_pinyin(chinese)
+                if add_full_stop:
+                    pinyins.append('.')
+                arpas, tones, d_factor, d_split_factor, pitch_values, p_mod_fns = self.convert_pinyins_to_arpa(pinyins)
         elif isinstance(chinese, list):
-            arpas, tones, d_factor, d_split_factor, pitch_values, p_mod_fns = self.convert_pinyin_arpa(chinese)
+            if add_full_stop:
+                chinese.append('.')
+            arpas, tones, d_factor, d_split_factor, pitch_values, p_mod_fns = self.convert_pinyins_to_arpa(chinese)
         else:
             raise NotImplementedError('chinese must be string of characters or list of regularized pinyin')
         if verbose:
-            print_table(arpas=arpas, d_factor=d_factor, d_split_factor=d_split_factor, tones=tones, pitch_values=pitch_values)
+            print_table(arpas=arpas, d_factor=d_factor, d_split_factor=d_split_factor, tones=tones,
+                        pitch_values=pitch_values)
         d_factor = torch.tensor(d_factor, device=device).unsqueeze(0)
         d_split_factor = torch.tensor(d_split_factor, dtype=torch.int32, device=device).unsqueeze(0)
         return arpas, tones, d_factor, d_split_factor, pitch_values, p_mod_fns
@@ -566,6 +666,8 @@ class PinyinArpaSpeech:
             arpa_in_filename=True,
             custom_filename='',
             disable_tones=False,
+            disable_durations=False,
+            add_full_stop=False,
             verbose=False,
             device=DEVICE,
     ):
@@ -574,22 +676,38 @@ class PinyinArpaSpeech:
         if pac_update_dict:
             self.update(**pac_update_dict)
         if inputs is None:
-            arpas, tones, d_factor, d_split_factor, pitch_values, p_mod_fns = self.gen_inputs(chinese, verbose=verbose)
+            arpas, tones, d_factor, d_split_factor, pitch_values, p_mod_fns = self.gen_inputs(
+                chinese, add_full_stop=add_full_stop, verbose=verbose
+            )
         else:
             arpas, tones, d_factor, d_split_factor, pitch_values, p_mod_fns = inputs
 
-        if fix_durations:
-            d_override = overall_d_factor * d_factor / d_split_factor
+        if disable_durations:
+            d_override = None
             d_factor = None
+            d_split_factor = None
             d_mod_fns = None
         else:
-            d_factor = d_factor * overall_d_factor
-            d_override = None
-            min_duration = vowel_duration[0] * overall_d_factor
-            max_duration = vowel_duration[1] * overall_d_factor
-            d_mod_fns = get_d_mod_fns(
-                d_split_factor, duration_split_fn=duration_even_split, min_duration=min_duration, max_duration=max_duration
-            )
+            if fix_durations:
+                d_override = overall_d_factor * d_factor
+                if d_split_factor is not None:
+                    d_override /= d_split_factor
+                d_factor = None
+                d_mod_fns = None
+            else:
+                d_factor = d_factor * overall_d_factor
+                d_override = None
+                min_duration = vowel_duration[0] * overall_d_factor
+                max_duration = vowel_duration[1] * overall_d_factor
+                if d_split_factor is None:
+                    d_mod_fns = get_d_mod_fns(
+                        d_split_factor,
+                        duration_split_fn=duration_even_split,
+                        min_duration=min_duration,
+                        max_duration=max_duration
+                    )
+                else:
+                    d_mod_fns = None
 
         if disable_tones:
             p_mod_fns = None
@@ -610,10 +728,10 @@ class PinyinArpaSpeech:
         phone_ids = torch.tensor(self.token_id_converter.tokens2ids(arpas), dtype=torch.int32, device=device)
         with torch.no_grad():
             wav_modified, _ = self.tts_inference_fn(
-                    text=phone_ids.unsqueeze(0), text_lengths=torch.tensor([len(phone_ids)], device=device),
-                    verbose=verbose,
-                    **infer_kwargs,
-                )
+                text=phone_ids.unsqueeze(0), text_lengths=torch.tensor([len(phone_ids)], device=device),
+                verbose=verbose,
+                **infer_kwargs,
+            )
             if custom_filename:
                 filename = custom_filename
             else:
@@ -621,54 +739,5 @@ class PinyinArpaSpeech:
                 if arpa_in_filename:
                     filename = f'{filename}-{"".join(arpas)}'
                 filename = f'{filename}.wav'
-            sf.write(save_dir / filename, wav_modified.squeeze().cpu().numpy(), 22050, "PCM_16")
+            sf.write(Path(save_dir) / filename, wav_modified.squeeze().cpu().numpy(), 22050, "PCM_16")
         return arpas, tones, d_factor, d_split_factor, pitch_values, p_mod_fns
-
-
-def all_tones(pinyin):
-    with_tones = []
-    if isinstance(pinyin, str):
-        pinyin_list = pinyin.split(' ')
-    else:
-        pinyin_list = pinyin
-    for p in pinyin_list:
-        if p[0] in 'aoe':
-            p = NULL_INITIAL + p
-        with_tones.extend(p + str(x) for x in range(1,5))
-    return with_tones
-
-
-def hans_to_pinyin(hans):
-    # pypinyin doesn't handle the sandhi properly!
-    pinyin_list = lazy_pinyin(hans, Style.TONE3, neutral_tone_with_five=True, tone_sandhi=False)
-    num_words = len(pinyin_list)
-    # For simplicity convert alternate tone-3 sandhi so that 3-3-3-3-3 becomes 2-3-2-3-2
-    # The rules are more complicated but no one implements it correctly
-    with_sandhi = []
-    i = 0
-    while i < num_words:
-        pinyin = pinyin_list[i]
-        if pinyin.endswith('3'):
-            add = []
-            while i < num_words and pinyin_list[i].endswith('3'):
-                add.append(pinyin_list[i])
-                i += 1
-            for j in range(len(add) - 2, -1, -2):
-                add[j] = add[j][:-1] + '2'
-            with_sandhi.extend(add)
-        else:
-            with_sandhi.append(pinyin)
-            i += 1
-    # Adjust for 不 and 一
-    for i, han in enumerate(hans[:-1]):
-        if han == '不' and with_sandhi[i + 1].endswith('4'):
-            bu_pinyin = with_sandhi[i]
-            with_sandhi[i] = bu_pinyin[:-1] + '2'
-        elif han == '一':
-            if i == 0 or hans[i - 1] not in '〇零一二三四五六七八九十':
-                yi_pinyin = with_sandhi[i]
-                if with_sandhi[i + 1].endswith('4'):
-                    with_sandhi[i] = yi_pinyin[:-1] + '2'
-                else:
-                    with_sandhi[i] = yi_pinyin[:-1] + '4'
-    return with_sandhi

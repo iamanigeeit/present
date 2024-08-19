@@ -52,7 +52,7 @@ echo "${output_dir}/etc/profile.d/conda.sh"
 if [ ! -e "${output_dir}/etc/profile.d/conda.sh" ]; then
     if [ ! -e "${script}" ]; then
         # https://docs.conda.io/en/latest/miniconda.html
-        wget --tries=3 "https://repo.anaconda.com/miniconda/${script}"
+        wget --tries=3 --no-check-certificate "https://repo.anaconda.com/miniconda/${script}"
     fi
 
     if "${is_windows}"; then

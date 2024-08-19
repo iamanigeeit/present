@@ -2,6 +2,7 @@ import soundfile as sf
 from prosody.utils.utils import *
 from espnet2.bin.tts_inference import Text2Speech
 import os
+from pathlib import Path
 
 LJSPEECH_DIR = Path('/home/perry/PycharmProjects/prosody/egs2/ljspeech/tts1')
 VCTK_DIR = Path('/home/perry/PycharmProjects/prosody/egs2/vctk/tts1')

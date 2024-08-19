@@ -1,9 +1,25 @@
 import re
+from pypinyin import lazy_pinyin, load_phrases_dict, Style
 
-O_TO_UO, O_TO_UO_SUB = re.compile(r'^([bpmf])o(?!u)'), r'\1uo'
+ADD_PINYIN_PHRASES = {
+    '很长': [['hěn'], ['cháng']],
+    '多长': [['duō'], ['cháng']],
+    '真长': [['zhēn'], ['cháng']],
+    '越长': [['yuè'], ['cháng']],
+    '这个': [['zhè'], ['ge']],
+    '那个': [['nà'], ['ge']],
+    '哪个': [['něi'], ['ge']],
+    '嗯': [['en']],
+    '什么': [['shěn'], ['me']],
+    '耳朵': [['ěr'], ['duō']],
+}
+
+load_phrases_dict(ADD_PINYIN_PHRASES)
+
+O_TO_UO, O_TO_UO_SUB = re.compile(r'^([bpmf])o(?![u])'), r'\1uo'
 U_TO_V, U_TO_V_SUB = re.compile(r'^([jqxy])u'), r'\1v'
 I_TO_IH, I_TO_IH_SUB = re.compile(r'^([zcs]h?|r)i'), r'\1ɨ'
-AN_TO_EN, AN_TO_EN_SUB = re.compile(r'([iv])an(?!g)'), r'\1en'
+AN_TO_EN, AN_TO_EN_SUB = re.compile(r'([yiv])an(?!g)'), r'\1en'
 
 
 NULL_INITIAL = 'ʔ'
@@ -31,8 +47,12 @@ RIMES = [
 ]
 
 VALID_PINYIN_REGEX = re.compile(
-    rf"({'|'.join(INITIALS)})({'|'.join(RIMES)})"
+    rf"({'|'.join(INITIALS)})({'|'.join(RIMES)})[0-5]"
 )
+GENERIC_ERHUA_REGEX = re.compile(r'([a-zü]+)r([0-5])')
+GENERIC_PINYIN_REGEX = re.compile(r'([a-zü]+)([0-5])')
+
+
 VALID_PINYINS = [
     'zhɨ', 'chɨ', 'shɨ', 'rɨ', 'zɨ', 'cɨ', 'sɨ',
 
@@ -60,7 +80,7 @@ VALID_PINYINS = [
     'bing', 'ping', 'ming', 'ding', 'ting', 'ning', 'ling', 'jing', 'qing', 'xing', 'ying',
     'jiong', 'qiong', 'xiong',
 
-    'ʔo', 'wo',
+    'ʔo', 'lo', 'wo',
     'ʔong', 'dong', 'tong', 'nong', 'long', 'gong', 'kong', 'hong', 'zhong', 'chong', 'rong', 'zong', 'cong', 'song', 'yong',
     'ʔou', 'pou', 'mou', 'fou', 'dou', 'tou', 'nou', 'lou', 'gou', 'kou', 'hou', 'zhou', 'chou', 'shou', 'rou', 'zou', 'cou', 'sou', 'you',
 
@@ -105,7 +125,7 @@ INITIAL_TO_PINYINS = {
     'c': ['cɨ', 'ca', 'can', 'cang', 'cai', 'cao', 'ce', 'cen', 'ceng', 'cei', 'cong', 'cou', 'cu', 'cuo', 'cui', 'cuan', 'cun'],
     's': ['sɨ', 'sa', 'san', 'sang', 'sai', 'sao', 'se', 'sen', 'seng', 'sei', 'song', 'sou', 'su', 'suo', 'sui', 'suan', 'sun'],
     'y': ['ya', 'yang', 'yai', 'yi', 'yen', 'ye', 'yao', 'yin', 'ying', 'yong', 'you', 'yv', 'yve', 'yven', 'yvn'],
-    'w': ['wa', 'wan', 'wang', 'wai', 'wen', 'weng', 'wei', 'wo', 'wu'],
+    'w': ['wa', 'wan', 'wang', 'wai', 'wen', 'weng', 'wei', 'wuo', 'wu'],
 }
 
 RIME_TO_PINYINS = {
@@ -130,7 +150,7 @@ RIME_TO_PINYINS = {
     'iang': ['biang', 'diang', 'niang', 'liang', 'jiang', 'qiang', 'xiang'],
     'ing': ['bing', 'ping', 'ming', 'ding', 'ting', 'ning', 'ling', 'jing', 'qing', 'xing', 'ying'],
     'iong': ['jiong', 'qiong', 'xiong'],
-    'o': ['ʔo', 'wo'],
+    'o': ['ʔo', 'lo', 'wo'],
     'ong': ['ʔong', 'dong', 'tong', 'nong', 'long', 'gong', 'kong', 'hong', 'zhong', 'chong', 'rong', 'zong', 'cong', 'song', 'yong'],
     'ou': ['ʔou', 'pou', 'mou', 'fou', 'dou', 'tou', 'nou', 'lou', 'gou', 'kou', 'hou', 'zhou', 'chou', 'shou', 'rou', 'zou', 'cou', 'sou', 'you'],
     'u': ['bu', 'pu', 'mu', 'fu', 'du', 'tu', 'nu', 'lu', 'gu', 'ku', 'hu', 'zhu', 'chu', 'shu', 'ru', 'zu', 'cu', 'su', 'wu'],
@@ -148,11 +168,78 @@ RIME_TO_PINYINS = {
 }
 
 
-def regularize_pinyin(pinyin):
-    pinyin = O_TO_UO.sub(O_TO_UO_SUB, pinyin)
-    pinyin = U_TO_V.sub(U_TO_V_SUB, pinyin)
-    pinyin = I_TO_IH.sub(I_TO_IH_SUB, pinyin)
-    pinyin = AN_TO_EN.sub(AN_TO_EN_SUB, pinyin)
-    if pinyin[0] in 'aoe':
-        pinyin = NULL_INITIAL + pinyin
-    return pinyin
+def regularize_pinyin(pinyins):
+    no_erhua = []
+    for pinyin in pinyins:  # expand erhua
+        m = GENERIC_ERHUA_REGEX.fullmatch(pinyin)
+        if m and not pinyin.startswith('er'):
+            no_erhua.append(''.join(m.groups()))
+            no_erhua.append('er2')
+        else:
+            no_erhua.append(pinyin)
+    reg_pinyins = []
+    for pinyin in no_erhua:
+        if GENERIC_PINYIN_REGEX.fullmatch(pinyin) is not None:
+            pinyin = O_TO_UO.sub(O_TO_UO_SUB, pinyin)
+            pinyin = U_TO_V.sub(U_TO_V_SUB, pinyin)
+            pinyin = I_TO_IH.sub(I_TO_IH_SUB, pinyin)
+            pinyin = AN_TO_EN.sub(AN_TO_EN_SUB, pinyin)
+            if pinyin[0] in 'aoe':
+                pinyin = NULL_INITIAL + pinyin
+        reg_pinyins.append(pinyin)
+    return reg_pinyins
+
+
+
+
+def all_tones(pinyin):
+    with_tones = []
+    if isinstance(pinyin, str):
+        pinyin_list = pinyin.split(' ')
+    else:
+        pinyin_list = pinyin
+    for p in pinyin_list:
+        if p[0] in 'aoe':
+            p = NULL_INITIAL + p
+        with_tones.extend(p + str(x) for x in range(1, 5))
+    return with_tones
+
+
+def hans_to_pinyins(hans):
+    # pypinyin doesn't handle the sandhi properly!
+    pinyin_list = lazy_pinyin(hans, Style.TONE3, neutral_tone_with_five=True, tone_sandhi=False)
+    num_words = len(pinyin_list)
+    # For simplicity convert alternate tone-3 sandhi so that 3-3-3-3-3 becomes 2-3-2-3-2
+    # The rules are more complicated but no one implements it correctly
+    with_sandhi = []
+    i = 0
+    while i < num_words:
+        pinyin = pinyin_list[i]
+        if GENERIC_PINYIN_REGEX.fullmatch(pinyin):
+            if pinyin.endswith('3'):
+                add = []
+                while i < num_words and pinyin_list[i].endswith('3'):
+                    add.append(pinyin_list[i])
+                    i += 1
+                for j in range(len(add) - 2, -1, -2):
+                    add[j] = add[j][:-1] + '2'
+                with_sandhi.extend(add)
+            else:
+                with_sandhi.append(pinyin)
+                i += 1
+        else:  # punctuation / invalid chars
+            with_sandhi.extend(list(pinyin))
+            i += 1
+    # Adjust for 不 and 一
+    for i, han in enumerate(hans[:-1]):
+        if han == '不' and with_sandhi[i + 1].endswith('4'):
+            bu_pinyin = with_sandhi[i]
+            with_sandhi[i] = bu_pinyin[:-1] + '2'
+        elif han == '一':
+            if i == 0 or hans[i - 1] not in '〇零一二三四五六七八九十':
+                yi_pinyin = with_sandhi[i]
+                if with_sandhi[i + 1].endswith('4'):
+                    with_sandhi[i] = yi_pinyin[:-1] + '2'
+                else:
+                    with_sandhi[i] = yi_pinyin[:-1] + '4'
+    return with_sandhi

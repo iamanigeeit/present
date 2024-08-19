@@ -33,7 +33,9 @@ class JETSProsodyGenerator(JETSGenerator):
         d_factor: Optional[torch.Tensor] = None,
         d_override: Optional[torch.Tensor] = None,
         p_factor: Optional[torch.Tensor] = None,
+        p_override: Optional[torch.Tensor] = None,
         e_factor: Optional[torch.Tensor] = None,
+        e_override: Optional[torch.Tensor] = None,
         d_split_factor: Optional[torch.Tensor] = None,
         d_mod_fns: Optional[Callable] = None,
         p_mod_fns: Optional[Callable] = None,
@@ -110,14 +112,21 @@ class JETSProsodyGenerator(JETSGenerator):
                 print('Duration pred:', d_outs.squeeze())
                 print('Pitch pred:', p_outs.squeeze())
                 print('Energy pred:', e_outs.squeeze())
+            assert d_factor is None or d_override is None, 'Cannot pass both d_factor and d_override'
             if d_factor is not None:
                 d_outs *= d_factor
-            if d_override is not None:
+            elif d_override is not None:
                 d_outs = d_override
+            assert p_factor is None or p_override is None, 'Cannot pass both p_factor and p_override'
             if p_factor is not None:
                 p_outs += p_factor.unsqueeze(-1)
+            elif p_override is not None:
+                p_outs = p_override.unsqueeze(-1)
+            assert e_factor is None or e_override is None, 'Cannot pass both e_factor and e_override'
             if e_factor is not None:
                 e_outs += e_factor.unsqueeze(-1)
+            elif e_override is not None:
+                e_outs = e_override.unsqueeze(-1)
             if d_split_factor is not None:
                 assert d_split_factor.dtype in {torch.short, torch.int, torch.long}
                 pitch_pred = p_outs.squeeze(-1)

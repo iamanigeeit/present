@@ -3,6 +3,17 @@ import numpy as np
 import torch
 import re
 
+
+def flatten_list(value_or_list):
+    flat_list = []
+    for v in value_or_list:
+        if isinstance(v, list):
+            flat_list.extend(v)
+        else:
+            flat_list.append(v)
+    return flat_list
+
+
 def mod_fn_generator(reference_points, combine_fn=None):
     def mod_fn(pred_val, split):
         refs = len(reference_points)
@@ -80,13 +91,13 @@ def get_d_mod_fns(d_split_factor, duration_split_fn, min_duration=0, max_duratio
     return d_mod_fns
 
 
-def round_floats(float_list):
+def round_floats(float_list, dp=3):
     for x in float_list:
-        n = format(x, '.2f').rstrip('.0')
-        yield n if n else '0'
+        n = format(x, f'.{dp}f').rstrip('0').rstrip('.')
+        yield n
 
 def round_and_join(float_list):
-    return '|'.join(round_floats(float_list))
+    return '|'.join(round_floats(float_list, dp=2))
 
 def print_table(**kwargs):
     print(generate_table(**kwargs))
@@ -94,7 +105,13 @@ def print_table(**kwargs):
 def generate_table(**kwargs):
     rows = {}
     for name, row in kwargs.items():
-        if isinstance(row, torch.Tensor):
+        if isinstance(row, np.ndarray):
+            r = row.flatten().tolist()
+            if np.issubdtype(row.dtype, np.floating):
+                rows[name] = list(round_floats(r))
+            else:
+                rows[name] = r
+        elif isinstance(row, torch.Tensor):
             r = torch.flatten(row).cpu().tolist()
             if torch.is_floating_point(row):
                 rows[name] = list(round_floats(r))
@@ -217,4 +234,4 @@ def expand_embed_duration(preds, d_split_factor, mod_fns=None):
     return preds_new
 
 def clean_filename(orig_text):
-    return re.sub(r'[^A-Za-z ]', '', orig_text).replace(' ', '_')
+    return re.sub(r'[^\w ]', '', orig_text).replace(' ', '_')

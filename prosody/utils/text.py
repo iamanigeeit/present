@@ -22,12 +22,19 @@ MARKS_REGEX = re.compile(rf"[{MODIFIER_MARKS}]")
 G2P = g2p_en.G2p()
 CMUDICT_WORDS = set(word for word, _ in cmudict.entries())
 
-ARPA_VOWELS = {'AA0', 'AA1', 'AA2', 'AE0', 'AE1', 'AE2', 'AH0', 'AH1', 'AH2',
-          'AO0', 'AO1', 'AO2', 'AW0', 'AW1', 'AW2', 'AY0', 'AY1', 'AY2',
-          'EH0', 'EH1', 'EH2', 'ER0', 'ER1', 'ER2', 'EY0', 'EY1', 'EY2',
-          'IH0', 'IH1', 'IH2', 'IY0', 'IY1', 'IY2',
-          'OW0', 'OW1', 'OW2', 'OY0', 'OY1', 'OY2',
-          'UH0', 'UH1', 'UH2', 'UW0', 'UW1', 'UW2'}
+ARPA_VOWELS = {
+    'AA0', 'AA1', 'AA2', 'AE0', 'AE1', 'AE2', 'AH0', 'AH1', 'AH2',
+    'AO0', 'AO1', 'AO2', 'AW0', 'AW1', 'AW2', 'AY0', 'AY1', 'AY2',
+    'EH0', 'EH1', 'EH2', 'ER0', 'ER1', 'ER2', 'EY0', 'EY1', 'EY2',
+    'IH0', 'IH1', 'IH2', 'IY0', 'IY1', 'IY2',
+    'OW0', 'OW1', 'OW2', 'OY0', 'OY1', 'OY2',
+    'UH0', 'UH1', 'UH2', 'UW0', 'UW1', 'UW2'
+}
+
+ARPA_CONSONANTS = {
+    'B', 'CH', 'D', 'DH', 'F', 'G', 'HH', 'JH', 'K', 'L', 'M', 'N',
+    'NG', 'P', 'R', 'S', 'SH', 'T', 'TH', 'V', 'W', 'Y', 'Z', 'ZH',
+}
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -43,6 +50,7 @@ DEFAULT_FACTOR_CONFIG = {
     'exclamation': False,
 }
 
+
 class TextEffectProcessor:
 
     def __init__(self, tokens2ids_fn,
@@ -57,7 +65,7 @@ class TextEffectProcessor:
         self.wordset = wordset
         self.G2P = g2p
         self.device = device
-        
+
         # Settings
         self.duration_unit = factor_config['duration_unit']
         self.vowel_pitch_up = factor_config['vowel_pitch_up']
@@ -68,7 +76,7 @@ class TextEffectProcessor:
         self.nonvowel_energy_up = factor_config['nonvowel_energy_up']
         self.question = factor_config['question']
         self.exclamation = factor_config['exclamation']
-        
+
         # States
         self.alignments = []
         self.mark_positions = {}
@@ -94,7 +102,7 @@ class TextEffectProcessor:
                     emphases[i] = '*'
             longers = [''] * len(graph_positions)
             for mark_pos in self.mark_positions['~']:
-                longers[graph_positions[mark_pos]-1] += '~'
+                longers[graph_positions[mark_pos]] += '~'
             return generate_table(
                 grapheme_list=grapheme_list, phoneme_list=phoneme_list,
                 low_tones=low_tones, high_tones=high_tones, emphases=emphases, longers=longers,
@@ -127,14 +135,19 @@ class TextEffectProcessor:
         nospace_pos = 0
         bare_pos = 0
         while bare_pos < text_len:
-            if bare_text[bare_pos] != nospace_text[nospace_pos]:
+            if bare_text[bare_pos] == nospace_text[nospace_pos]:
+                bare_pos += 1
+            else:
                 mark = nospace_text[nospace_pos]
                 mark_positions[mark].append(bare_pos)
-            else:
-                bare_pos += 1
             nospace_pos += 1
+        # Process end-of-text marks
+        for end_pos in range(nospace_pos, len(nospace_text)):
+            mark = nospace_text[end_pos]
+            mark_positions[mark].append(bare_pos)
         nomarks_text = MARKS_REGEX.sub('', text)
         words = WORD_REGEX.findall(nomarks_text)
+        mark_positions['~'] = [p-1 for p in mark_positions['~']]  # tildes come AFTER the grapheme
         self.mark_positions = mark_positions
         return words, mark_positions
 
@@ -179,7 +192,6 @@ class TextEffectProcessor:
             text = text.replace(word, replace_word)
         return text
 
-
     def phonemize(self, words):
         phonemes = self.G2P(' '.join(words))
         word_phones = []
@@ -191,7 +203,6 @@ class TextEffectProcessor:
             end += 1
         word_phones.append(phonemes[start:end])
         return word_phones
-
 
     def get_alignment_data(self, words, word_phones):
         alignments = []
@@ -213,7 +224,7 @@ class TextEffectProcessor:
             phone_start = phone_end
         self.alignments = alignments
         return alignments, graphemes, phonemes, g2p_pos
-    
+
     def get_scale_factors(self, phonemes, g2p_pos, has_eos_token=False):
         factor_len = len(phonemes) + has_eos_token
         d_factor = [1.0] * factor_len
@@ -221,7 +232,7 @@ class TextEffectProcessor:
         e_factor = [0.0] * factor_len
 
         for longer_pos in self.mark_positions['~']:
-            phone_start, phone_end = g2p_pos[longer_pos-1]  # tildes come AFTER the grapheme
+            phone_start, phone_end = g2p_pos[longer_pos]
             for i in range(phone_start, phone_end):
                 d_factor[i] += self.duration_unit
 
@@ -258,7 +269,7 @@ class TextEffectProcessor:
         for i, phoneme in enumerate(phonemes):
             if phoneme == '?' and self.question:
                 # Mark nearest consonants as +1, nearest vowel as +0.5, second nearest vowel -0.5
-                phone_pos = i-1
+                phone_pos = i - 1
                 vowels_found = 0
                 while phone_pos >= 0:
                     phoneme = phonemes[phone_pos]
@@ -277,7 +288,7 @@ class TextEffectProcessor:
                     phone_pos -= 1
 
             elif phoneme == '!' and self.exclamation:
-                phone_pos = i-1
+                phone_pos = i - 1
                 vowels_found = 0
                 while phone_pos >= 0:
                     phoneme = phonemes[phone_pos]
@@ -299,7 +310,6 @@ class TextEffectProcessor:
         d_split_factor = d_factor.int()
         d_factor /= d_split_factor
         return d_factor, p_factor, e_factor, d_split_factor
-
 
     def get_pitch_values(self, word_tones, words, phonemes, g2p_pos):
         pitch_values = [[]] * len(phonemes)
@@ -340,7 +350,7 @@ class TextEffectProcessor:
                         phone_pos += 1
                 tone_i += 1
                 # if there are repeated word_tones, move to the next word
-                if tone_i < num_tones and word_tones[tone_i-1] == word_tones[tone_i]:
+                if tone_i < num_tones and word_tones[tone_i - 1] == word_tones[tone_i]:
                     start_pos += len(curr_word)
                     word_i += 1
             else:
@@ -366,5 +376,3 @@ class TextEffectProcessor:
             return phonemes, phone_ids, d_factor, p_factor, e_factor, d_split_factor, pitch_values, words, word_phones, g2p_pos
         else:
             return phonemes, phone_ids, d_factor, p_factor, e_factor, d_split_factor, pitch_values
-
-

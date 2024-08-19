@@ -1,14 +1,26 @@
 This repository is built on top of [ESPNet](https://github.com/espnet/espnet).
 
-[Paper](prosody/paper/Subphoneme_Level_PRESENT__PRosody_Editing_without_Style_Embeddings_or_New_Training.pdf) has been submitted to Signal Processing Letters.
+[Paper](https://arxiv.org/abs/2408.06827) has been (re)submitted to Signal Processing Letters. Audio samples are [here](https://present2024.web.app/).
 
-The audio samples are [here](https://present2023.web.app/).
+Various notebook examples:
+- [Aligner](prosody/aligner.ipynb)
+- [Text effects](prosody/text_effects.ipynb) (long phonemes, questions)
+- [Prosody transfer](prosody/prosody.ipynb)
 
-Quick links:
-- [Aligner example](prosody/aligner.ipynb)
-- [Text effects example](prosody/text_effects.ipynb)
-- [Prosody transfer example](prosody/prosody.ipynb)
-- [English-to-Mandarin zero-shot language transfer example](prosody/mandarin.ipynb)
+Zero shot language transfer:
+- [English to German](prosody/german.ipynb)
+  - [Evaluation on CSS10 with Whisper](prosody/whisper/german_cer.ipynb)
+
+
+- [English to Hungarian](prosody/hungarian.ipynb)
+  - [Evaluation on CSS10 with Whisper](prosody/whisper/hungarian_cer.ipynb)
+
+
+- [English to Spanish](prosody/mandarin.ipynb)
+  - [Evaluation on CSS10 with Whisper](prosody/whisper/spanish_cer.ipynb)
+
+
+- [English to Mandarin](prosody/mandarin.ipynb)
   - For info on how to run the baseline, refer to my [clone of zm-text-tts](https://github.com/iamanigeeit/zm-text-tts)
-  - [Evaluation of zero-shot language transfer on AISHELL-3](prosody/eval_cer.ipynb) 
+  - [Evaluation on AISHELL-3 with FunASR Paraformer](prosody/funasr/mandarin_cer.ipynb) 
 

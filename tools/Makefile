@@ -1,5 +1,5 @@
-# PyTorch version: 1.11.0, 1.12.1, 1.13.1, 2.0.1 are tested.
-TH_VERSION := 2.0.1
+# PyTorch version: 1.12.1, 1.13.1, 2.0.1, 2.1.0 are tested.
+TH_VERSION := 2.1.0
 
 # Use pip for pytorch installation even if you have anaconda
 ifneq ($(shell test -f ./activate_python.sh && grep 'conda activate' ./activate_python.sh),)
@@ -26,10 +26,10 @@ WITH_OMP=ON
 
 .PHONY: all clean
 
-all: showenv python conda_packages.done ffmpeg.done sctk sph2pipe check_install
+all: showenv python conda_packages.done ffmpeg.done sctk check_install
 
 python: activate_python.sh packaging.done espnet.done pytorch.done chainer.done fairscale.done torch_optimizer.done
-extra: warp-transducer.done chainer_ctc.done nkf.done moses.done mwerSegmenter.done pesq kenlm.done pyopenjtalk.done py3mmseg.done beamformit.done fairseq.done s3prl.done k2.done transformers.done phonemizer.done longformer.done muskits.done whisper.done rvad_fast.done sounfile_test parallel-wavegan.done lora.done
+extra: warp-transducer.done chainer_ctc.done nkf.done moses.done mwerSegmenter.done pesq kenlm.done pyopenjtalk.done py3mmseg.done beamformit.done fairseq.done s3prl.done k2.done transformers.done phonemizer.done longformer.done muskits.done whisper.done rvad_fast.done sounfile_test parallel-wavegan.done lora.done sph2pipe
 
 activate_python.sh:
 	test -f activate_python.sh || { echo "Error: Run ./setup_python.sh or ./setup_anaconda.sh"; exit 1; }
@@ -119,6 +119,7 @@ espnet.done: pytorch.done conda_packages.done
 	@echo NUMPY_VERSION=$(shell . ./activate_python.sh && python3 -c "import numpy; print(numpy.__version__)")
 	. ./activate_python.sh && python3 -m pip install -e "..[train, recipe]"  # Install editable mode by default
 	@echo NUMPY_VERSION=$(shell . ./activate_python.sh && python3 -c "import numpy; print(numpy.__version__)")
+	. ./activate_python.sh && python -m nltk.downloader averaged_perceptron_tagger_eng
 	touch espnet.done
 
 sounfile_test: espnet.done
@@ -231,7 +232,6 @@ transformers.done: espnet.done
 	. ./activate_python.sh && ./installers/install_transformers.sh
 	touch transformers.done
 
-
 parallel-wavegan.done: espnet.done
 	. ./activate_python.sh && ./installers/install_parallel-wavegan.sh
 	touch parallel-wavegan.done
@@ -252,6 +252,10 @@ rvad_fast.done: espnet.done
 	git clone https://github.com/zhenghuatan/rVADfast.git
 	touch rvad_fast.done
 
+discrete_speech_metrics.done: espnet.done
+	. ./activate_python.sh && ./installers/install_discrete_speech_metrics.sh
+	touch discrete_speech_metrics.done
+
 check_install: python
 	. ./activate_python.sh; . ./extra_path.sh; python3 check_install.py
 
@@ -270,5 +274,7 @@ clean_extra:
 	rm -rf hts_engine_API.done open_jtalk.done pyopenjtalk.done
 	rm -rf muskits.done
 	rm -rf rvad_fast.done
+	rm -rf chainer espeak-ng festival MBROLA ParallelWaveGAN
+	rm -rf py3mmseg sctk* speech_tools sph2pipe* ._mwerSegmenter
 	rm -rf nkf mecab swig moses mwerSegmenter
 	rm -rf PESQ PESQ.zip
